@@ -1,16 +1,78 @@
-# React + Vite
+# Альфа — Бизнес-платформа (frontend)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Прототип клиентского и банковского интерфейса кредитного конвейера для ИП и ООО.
+Сделан на **React 19 + Vite 8** без дополнительных UI-библиотек: только React,
+CSS и собственные переиспользуемые компоненты.
 
-Currently, two official plugins are available:
+## Экраны
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Экран | Где | Что делает |
+|---|---|---|
+| Вход | `src/pages/LoginPage.jsx` | Авторизация предпринимателя/сотрудника (деморежим), ошибки, загрузка |
+| Кабинет предпринимателя | `src/pages/EntrepreneurDashboard.jsx` | Список заявок, поиск и фильтры, статусы, переход в карточку |
+| Подбор кредита | `src/pages/CreditCalculator.jsx` | Фильтры каталога, сумма/срок, расчёт платежа и переплаты, форма заявки с проверкой ИНН через API |
+| Профиль компании | `src/pages/ProfilePage.jsx` | Данные предпринимателя и бизнеса (localStorage), проверка компании по ИНН через API |
+| Карточка заявки клиента | `src/pages/ApplicationDetails.jsx` | Степпер этапов, условия предложения, принятие предложения, альтернативы, история |
+| Интерфейс сотрудника банка | `src/pages/BankWorkspace.jsx` | Очередь ручной проверки, вкладки «Компания / Финансы / Проверки / Скоринг / История», форма решения |
+| История | компонент `Timeline` в `src/components/ui.jsx` | Вертикальный таймлайн событий |
 
-## React Compiler
+Общие компоненты (кнопки, поля, бейджи, табы, модалка, тост, gauge) — `src/components/ui.jsx`.
+Дизайн-токены и базовые стили — `src/index.css`, стили экранов — `src/App.css`.
+Демо-данные — `src/data/mock.js`. Клиент API — `src/api.js`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Запуск
 
-## Expanding the Oxlint configuration
+```bash
+cd front/alfa-frontend
+npm install          # при первом запуске
+npm run dev          # http://localhost:5173
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Сборка и проверки:
+
+```bash
+npm run build        # production-сборка в dist/
+npm run lint         # oxlint
+npm run preview      # предпросмотр собранной версии
+```
+
+## Демо-учётные записи
+
+Авторизация в прототипе локальная (обращений к серверу авторизации нет):
+
+| Логин | Пароль | Роль |
+|---|---|---|
+| `client` | `client` | предприниматель |
+| `bank` | `bank` | сотрудник банка |
+
+Любой другой непустой логин открывает кабинет предпринимателя; для проверки
+состояния ошибки можно ввести логин `error` или пароль `wrong`.
+
+## Подключение к backend
+
+По умолчанию frontend обращается к `http://localhost:8000`. Адрес можно
+переопределить переменной окружения:
+
+```bash
+cp .env.example .env
+# при необходимости измените VITE_API_URL
+```
+
+Backend (FastAPI + PostgreSQL) находится в `../backend/`, там же инструкция по
+настройке `.env` и применению `DB.sql`. Доступные эндпоинты:
+
+- `GET /health` — статус сервиса и базы данных;
+- `GET /api/companies/{inn}` — компания по ИНН из таблицы `companies`.
+
+Если backend недоступен, интерфейс продолжает работать на демо-данных:
+в шапке/футере показывается «API недоступен · демо-данные», а в форме заявки и
+профиле доступна кнопка получения демо-сведений о компании.
+
+## Ограничения прототипа
+
+- Авторизация и все финансовые решения — демонстрационные, без реального API банка.
+- Заявки, продукты, ставки, скоринг и решения хранятся в mock-данных и
+  `localStorage` (создание заявки, принятие предложения, решения сотрудника).
+- Backend реализует только health-check и получение компании по ИНН; бизнес-логики
+  кредитования, аутентификации и загрузки документов пока нет.
+- Все суммы, ставки и условия не являются офертой банка.

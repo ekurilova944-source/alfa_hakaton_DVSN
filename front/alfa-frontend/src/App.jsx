@@ -1,494 +1,371 @@
-
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import { checkHealth, getCompany } from "./api.js";
+import { ApiStatus, Button, Toast } from "./components/ui.jsx";
+import {
+  BANK_QUEUE,
+  DEMO_COMPANY,
+  ENTREPRENEUR_APPLICATIONS,
+  formatMoney,
+} from "./data/mock.js";
+import ApplicationDetails from "./pages/ApplicationDetails.jsx";
+import BankWorkspace from "./pages/BankWorkspace.jsx";
+import CreditCalculator from "./pages/CreditCalculator.jsx";
+import EntrepreneurDashboard from "./pages/EntrepreneurDashboard.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
 
-function App() {
-  const [login, setLogin] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+const SESSION_KEY = "alfaSession";
+const APPLICATIONS_KEY = "alfaApplications";
 
-  const [formData, setFormData] = useState({
-    lastName: "",
-    firstName: "",
-    middleName: "",
-    inn: "",
-    ogrnip: "",
-    birthDate: "",
-    businessName: "",
-    activity: "",
-    taxSystem: "",
-    phone: "",
-    email: "",
-    address: "",
-  });
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
-  function handleLogin(event) {
-    event.preventDefault();
-
-    if (!login.trim() || !password.trim()) {
-      setError("Заполни логин и пароль");
-      return;
+function loadApplications() {
+  try {
+    const raw = localStorage.getItem(APPLICATIONS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
+  } catch {
+    // игнорируем повреждённые данные
+  }
+  return ENTREPRENEUR_APPLICATIONS;
+}
 
-    setError("");
-    setIsLoggedIn(true);
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function nextApplicationId(applications) {
+  const year = new Date().getFullYear();
+  const maxNumber = applications.reduce((max, application) => {
+    const match = String(application.id).match(/(\d+)$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return `APP-${year}-${String(maxNumber + 1).padStart(3, "0")}`;
+}
+
+const NAV_ITEMS = {
+  business: [
+    { id: "applications", label: "Мои заявки" },
+    { id: "calculator", label: "Подобрать кредит" },
+    { id: "profile", label: "Профиль" },
+  ],
+  employee: [{ id: "bank", label: "Очередь заявок" }],
+};
+
+export default function App() {
+  const [session, setSession] = useState(loadSession);
+  const [view, setView] = useState(() =>
+    loadSession()?.role === "employee" ? "bank" : "applications"
+  );
+  const [applications, setApplications] = useState(loadApplications);
+  const [queue, setQueue] = useState(BANK_QUEUE);
+  const [selectedApplicationId, setSelectedApplicationId] = useState(null);
+  const [company, setCompany] = useState(DEMO_COMPANY);
+  const [health, setHealth] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [isApplicationsLoading, setIsApplicationsLoading] = useState(true);
+
+  const isEmployee = session?.role === "employee";
+  const navItems = NAV_ITEMS[isEmployee ? "employee" : "business"];
+
+  const selectedApplication = useMemo(
+    () => applications.find((application) => application.id === selectedApplicationId) ?? null,
+    [applications, selectedApplicationId]
+  );
+
+  useEffect(() => {
+    checkHealth().then(setHealth);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsApplicationsLoading(false), 350);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(APPLICATIONS_KEY, JSON.stringify(applications));
+    } catch {
+      // localStorage может быть недоступен
+    }
+  }, [applications]);
+
+  useEffect(() => {
+    if (!session) return undefined;
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } catch {
+      // sessionStorage может быть недоступен
+    }
+    return undefined;
+  }, [session]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = setTimeout(() => setToast(null), 4200);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (session?.role !== "business") return;
+    let active = true;
+    getCompany(DEMO_COMPANY.inn).then((result) => {
+      if (active && result.ok) setCompany(result.company);
+    });
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  function showToast(title, text) {
+    setToast({ title, text });
   }
 
-  function handleChange(event) {
-    const { name, value } = event.target;
-
-    setFormData((previousData) => ({
-      ...previousData,
-      [name]: value,
-    }));
-  }
-
-  function handleSave(event) {
-    event.preventDefault();
-
-    localStorage.setItem("ipProfile", JSON.stringify(formData));
-
-    alert("Данные сохранены в этом браузере!");
+  function handleLogin({ login, role }) {
+    setSession({
+      login,
+      role,
+      name: role === "employee" ? "Сотрудник банка" : DEMO_COMPANY.company_name,
+    });
+    setView(role === "employee" ? "bank" : "applications");
   }
 
   function handleLogout() {
-    setIsLoggedIn(false);
-    setLogin("");
-    setPassword("");
-    setError("");
+    sessionStorage.removeItem(SESSION_KEY);
+    setSession(null);
+    setView("applications");
+    setSelectedApplicationId(null);
+    setToast(null);
   }
 
-  const inputStyle = {
-    width: "100%",
-    padding: "12px 14px",
-    marginTop: "8px",
-    border: "1px solid #d9dce3",
-    borderRadius: "8px",
-    fontSize: "15px",
-    boxSizing: "border-box",
-    background: "#fff",
-    color: "#222",
-  };
+  function handleOpenApplication(id) {
+    setSelectedApplicationId(id);
+    setView("application");
+  }
 
-  const labelStyle = {
-    display: "block",
-    fontSize: "14px",
-    fontWeight: "500",
-    color: "#333",
-    marginBottom: "20px",
-  };
+  function handleApply(draft) {
+    const id = nextApplicationId(applications);
+    const application = {
+      id,
+      date: todayIso(),
+      amount: draft.amount,
+      termMonths: draft.termMonths,
+      productTitle: draft.product.title,
+      purpose: draft.purpose,
+      status: "processing",
+      company: draft.company || DEMO_COMPANY,
+      requested: {
+        inn: draft.inn,
+        revenue: draft.revenue,
+        profit: draft.profit,
+        obligations: draft.obligations,
+        revenueSource: draft.revenueSource,
+      },
+      history: [
+        {
+          title: "Заявка подана",
+          date: "только что",
+          desc: `Клиент отправил заявку на кредит «${draft.product.title}» на сумму ${formatMoney(
+            draft.amount
+          )}.`,
+        },
+        {
+          title: "Начата автоматическая проверка",
+          date: "только что",
+          desc: "Система проверяет данные заявки и рассчитывает скоринг.",
+        },
+      ],
+    };
 
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "0 24px",
-  };
+    setApplications((previous) => [application, ...previous]);
+    setSelectedApplicationId(id);
+    setView("application");
+    showToast("Заявка отправлена", `Номер ${id}. Статус рассмотрения доступен в кабинете.`);
+  }
 
-  // Личный кабинет предпринимателя
-  if (isLoggedIn) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#f5f6fa",
-          fontFamily: "Arial, sans-serif",
-          color: "#222",
-        }}
-      >
-        <header
-          style={{
-            background: "#fff",
-            padding: "18px 5%",
-            borderBottom: "1px solid #e5e7eb",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "16px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-            }}
-          >
-            <div
-              style={{
-                width: "42px",
-                height: "42px",
-                background: "#ef3124",
-                color: "#fff",
-                borderRadius: "12px",
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                fontSize: "25px",
-                fontWeight: "bold",
-              }}
-            >
-              А
-            </div>
+  function handleAcceptOffer(id) {
+    setApplications((previous) =>
+      previous.map((application) =>
+        application.id === id
+          ? {
+              ...application,
+              status: "issued",
+              history: [
+                {
+                  title: "Кредит выдан",
+                  date: "только что",
+                  desc: "Клиент принял предложение. Средства зачислены на расчётный счёт.",
+                },
+                ...application.history,
+              ],
+            }
+          : application
+      )
+    );
+    showToast("Кредит оформлен", "Заявка переведена в статус «Кредит выдан».");
+  }
 
-            <div>
-              <div style={{ fontSize: "20px", fontWeight: "bold" }}>
-                Альфа-Бизнес
-              </div>
-              <div style={{ fontSize: "12px", color: "#777" }}>
-                Бизнес-платформа
-              </div>
-            </div>
-          </div>
+  function handleChooseAlternative(id, alternative) {
+    setApplications((previous) =>
+      previous.map((application) =>
+        application.id === id
+          ? {
+              ...application,
+              status: "processing",
+              productTitle: alternative.title,
+              amount: alternative.amount,
+              termMonths: alternative.termMonths,
+              offer: null,
+              alternatives: undefined,
+              declineReason: undefined,
+              history: [
+                {
+                  title: "Клиент выбрал альтернативное предложение",
+                  date: "только что",
+                  desc: `Выбран продукт «${alternative.title}» на сумму ${formatMoney(
+                    alternative.amount
+                  )}.`,
+                },
+                ...application.history,
+              ],
+            }
+          : application
+      )
+    );
+    showToast("Альтернатива выбрана", "Заявка обновлена и отправлена на оформление.");
+  }
 
+  function handleDecision(queueId, decision) {
+    const application = queue.find((item) => item.id === queueId);
+    setQueue((previous) => previous.filter((item) => item.id !== queueId));
+
+    const messages = {
+      approve: ["Заявка одобрена", "Решение и обоснование зафиксированы сотрудником."],
+      reject: ["Заявка отклонена", "Решение и обоснование зафиксированы сотрудником."],
+      alternative: [
+        "Альтернативные условия отправлены",
+        "Клиенту будет предложено альтернативное решение.",
+      ],
+    };
+    const [title, text] = messages[decision] || ["Решение зафиксировано", ""];
+    showToast(title, application ? `${application.id}: ${text}` : text);
+  }
+
+  if (!session) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  const activeNavId = view === "application" ? "applications" : view;
+  const contentView = isEmployee ? "bank" : view;
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="app-header-inner">
           <button
             type="button"
-            onClick={handleLogout}
-            style={{
-              padding: "10px 18px",
-              background: "#fff",
-              border: "1px solid #ddd",
-              borderRadius: "8px",
-              cursor: "pointer",
-              fontSize: "14px",
-            }}
+            className="brand"
+            style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}
+            onClick={() => setView(isEmployee ? "bank" : "applications")}
           >
-            Выйти
+            <div className="brand-logo">А</div>
+            <div style={{ textAlign: "left" }}>
+              <div className="brand-name">Альфа</div>
+              <div className="brand-subtitle">
+                {isEmployee ? "Интерфейс сотрудника" : "Бизнес-платформа"}
+              </div>
+            </div>
           </button>
-        </header>
 
-        <main
-          style={{
-            maxWidth: "1000px",
-            margin: "0 auto",
-            padding: "36px 20px 60px",
-          }}
-        >
-          <div style={{ marginBottom: "28px" }}>
-            <div
-              style={{
-                color: "#ef3124",
-                fontSize: "12px",
-                fontWeight: "bold",
-                letterSpacing: "1px",
-                marginBottom: "10px",
-              }}
-            >
-              ЛИЧНЫЙ КАБИНЕТ
-            </div>
-
-            <h1 style={{ fontSize: "30px", margin: "0 0 12px" }}>
-              Данные предпринимателя
-            </h1>
-
-            <p style={{ color: "#666", lineHeight: 1.6, margin: 0 }}>
-              Заполните информацию о себе и своём бизнесе.
-              Вы сможете сохранить данные и вернуться к ним позже.
-            </p>
-          </div>
-
-          <form
-            onSubmit={handleSave}
-            style={{
-              background: "#fff",
-              padding: "30px",
-              borderRadius: "16px",
-              boxShadow: "0 4px 20px rgba(0, 0, 0, 0.04)",
-            }}
-          >
-            <h2 style={{ fontSize: "20px", margin: "0 0 24px" }}>
-              Личные данные
-            </h2>
-
-            <div style={gridStyle}>
-              <label style={labelStyle}>
-                Фамилия
-                <input
-                  name="lastName"
-                  value={formData.lastName}
-                  onChange={handleChange}
-                  placeholder="Введите фамилию"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                Имя
-                <input
-                  name="firstName"
-                  value={formData.firstName}
-                  onChange={handleChange}
-                  placeholder="Введите имя"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                Отчество
-                <input
-                  name="middleName"
-                  value={formData.middleName}
-                  onChange={handleChange}
-                  placeholder="Введите отчество"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                Дата рождения
-                <input
-                  type="date"
-                  name="birthDate"
-                  value={formData.birthDate}
-                  onChange={handleChange}
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                ИНН
-                <input
-                  name="inn"
-                  value={formData.inn}
-                  onChange={handleChange}
-                  placeholder="Введите ИНН"
-                  inputMode="numeric"
-                  maxLength={12}
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                ОГРНИП
-                <input
-                  name="ogrnip"
-                  value={formData.ogrnip}
-                  onChange={handleChange}
-                  placeholder="Введите ОГРНИП"
-                  inputMode="numeric"
-                  maxLength={15}
-                  style={inputStyle}
-                />
-              </label>
-            </div>
-
-            <hr
-              style={{
-                border: 0,
-                borderTop: "1px solid #eee",
-                margin: "8px 0 28px",
-              }}
-            />
-
-            <h2 style={{ fontSize: "20px", marginBottom: "24px" }}>
-              Информация о бизнесе
-            </h2>
-
-            <div style={gridStyle}>
-              <label style={labelStyle}>
-                Название бизнеса
-                <input
-                  name="businessName"
-                  value={formData.businessName}
-                  onChange={handleChange}
-                  placeholder="Название вашего бизнеса"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                Сфера деятельности
-                <select
-                  name="activity"
-                  value={formData.activity}
-                  onChange={handleChange}
-                  style={inputStyle}
-                >
-                  <option value="">Выберите сферу</option>
-                  <option value="Торговля">Торговля</option>
-                  <option value="Услуги">Услуги</option>
-                  <option value="Производство">Производство</option>
-                  <option value="ИТ">ИТ</option>
-                  <option value="Строительство">Строительство</option>
-                  <option value="Другое">Другое</option>
-                </select>
-              </label>
-
-              <label style={labelStyle}>
-                Система налогообложения
-                <select
-                  name="taxSystem"
-                  value={formData.taxSystem}
-                  onChange={handleChange}
-                  style={inputStyle}
-                >
-                  <option value="">Выберите систему</option>
-                  <option value="УСН «Доходы»">УСН «Доходы»</option>
-                  <option value="УСН «Доходы минус расходы»">
-                    УСН «Доходы минус расходы»
-                  </option>
-                  <option value="ПСН (патент)">ПСН (патент)</option>
-                  <option value="ОСНО">ОСНО</option>
-                  <option value="ЕСХН">ЕСХН</option>
-                  <option value="Пока не выбрана">Пока не выбрана</option>
-                </select>
-              </label>
-            </div>
-
-            <hr
-              style={{
-                border: 0,
-                borderTop: "1px solid #eee",
-                margin: "8px 0 28px",
-              }}
-            />
-
-            <h2 style={{ fontSize: "20px", marginBottom: "24px" }}>
-              Контактные данные
-            </h2>
-
-            <div style={gridStyle}>
-              <label style={labelStyle}>
-                Номер телефона
-                <input
-                  type="tel"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleChange}
-                  placeholder="+7 (___) ___-__-__"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={labelStyle}>
-                Электронная почта
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  placeholder="example@mail.ru"
-                  style={inputStyle}
-                />
-              </label>
-
-              <label
-                style={{
-                  ...labelStyle,
-                  gridColumn: "1 / -1",
-                }}
-              >
-                Адрес регистрации
-                <input
-                  name="address"
-                  value={formData.address}
-                  onChange={handleChange}
-                  placeholder="Город, улица, дом"
-                  style={inputStyle}
-                />
-              </label>
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                marginTop: "10px",
-              }}
-            >
+          <nav className="app-nav" aria-label="Основная навигация">
+            {navItems.map((item) => (
               <button
-                type="submit"
-                style={{
-                  background: "#ef3124",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "14px 28px",
-                  fontSize: "15px",
-                  fontWeight: "bold",
-                  cursor: "pointer",
-                }}
+                key={item.id}
+                type="button"
+                className={`nav-link${activeNavId === item.id ? " is-active" : ""}`}
+                onClick={() => setView(item.id)}
               >
-                Сохранить данные
+                {item.label}
               </button>
+            ))}
+          </nav>
+
+          <div className="app-user">
+            <div className="user-chip">
+              <span className="user-avatar">{isEmployee ? "С" : "Р"}</span>
+              <div>
+                <div className="user-name">{session.name}</div>
+                <div className="user-role">
+                  {isEmployee ? "Роль: сотрудник банка" : "Роль: предприниматель"}
+                </div>
+              </div>
             </div>
-          </form>
-
-          <p
-            style={{
-              color: "#888",
-              fontSize: "12px",
-              textAlign: "center",
-              marginTop: "24px",
-            }}
-          >
-            Данные сохраняются локально в вашем браузере.
-            Это демонстрационный интерфейс.
-          </p>
-        </main>
-      </div>
-    );
-  }
-
-  // Экран входа
-  return (
-    <div className="login-page">
-      <header className="brand">
-        <div className="brand-logo">А</div>
-
-        <div>
-          <div className="brand-name">Альфа</div>
-          <div className="brand-subtitle">Бизнес-платформа</div>
+            <Button variant="ghost" size="sm" onClick={handleLogout}>
+              Выйти
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="login-container">
-        <div className="login-label">ЛИЧНЫЙ КАБИНЕТ</div>
+      <main>
+        {contentView === "calculator" && (
+          <CreditCalculator defaultCompany={company} health={health} onApply={handleApply} />
+        )}
 
-        <h1>Добро пожаловать!</h1>
+        {contentView === "profile" && <ProfilePage company={company} health={health} />}
 
-        <p className="login-description">
-          Управляйте финансами и кредитными заявками вашего бизнеса
-        </p>
-
-        <form onSubmit={handleLogin}>
-          <label htmlFor="login">Логин или email</label>
-
-          <input
-            id="login"
-            type="text"
-            placeholder="name@company.ru"
-            value={login}
-            onChange={(event) => setLogin(event.target.value)}
+        {contentView === "application" && selectedApplication && (
+          <ApplicationDetails
+            application={selectedApplication}
+            onBack={() => setView("applications")}
+            onAccept={handleAcceptOffer}
+            onChooseAlternative={handleChooseAlternative}
           />
+        )}
 
-          <label htmlFor="password">Пароль</label>
+        {contentView === "application" && !selectedApplication && (
+          <div className="page">
+            <p className="muted">Заявка не найдена.</p>
+            <Button variant="secondary" onClick={() => setView("applications")}>
+              К списку заявок
+            </Button>
+          </div>
+        )}
 
-          <input
-            id="password"
-            type="password"
-            placeholder="Введите пароль"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
+        {contentView === "bank" && <BankWorkspace queue={queue} onDecision={handleDecision} />}
+
+        {contentView === "applications" && (
+          <EntrepreneurDashboard
+            applications={applications}
+            company={company}
+            isLoading={isApplicationsLoading}
+            onOpenApplication={handleOpenApplication}
+            onNewApplication={() => setView("calculator")}
           />
-
-          {error && <div className="error-message">{error}</div>}
-
-          <button className="login-button" type="submit">
-            Войти <span>→</span>
-          </button>
-        </form>
-
-        <div className="login-footer">
-          Безопасные финансовые решения для вашего бизнеса
-        </div>
+        )}
       </main>
 
-      <footer className="page-footer">
-        © 2026 Альфа · Бизнес-платформа
+      <footer className="app-footer">
+        <div className="app-footer-inner">
+          <span>© 2026 Альфа · Бизнес-платформа · Демонстрационный прототип</span>
+          <span className="row" style={{ gap: 12 }}>
+            <span>Данные и условия не являются офертой банка</span>
+            <ApiStatus health={health} />
+          </span>
+        </div>
       </footer>
+
+      <Toast toast={toast} />
     </div>
   );
 }
-
-export default App;
