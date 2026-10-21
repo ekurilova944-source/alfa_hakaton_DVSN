@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ApiStatus, Button, Field } from "../components/ui.jsx";
-import { DEMO_COMPANIES, formatDate } from "../data/mock.js";
+import { formatDate } from "../data/mock.js";
 import { getCompany } from "../api.js";
 
 const EMPTY_FORM = {
@@ -56,23 +56,6 @@ export default function ProfilePage({ company, health }) {
       setLookup({ state: "ok", company: result.company, error: null });
     } else {
       setLookup({ state: "error", company: null, error: result });
-    }
-  }
-
-  function useDemoCompany() {
-    const demo = DEMO_COMPANIES[String(lookupInn).trim()];
-    if (demo) {
-      setLookup({ state: "demo", company: demo, error: null });
-    } else {
-      setLookup({
-        state: "error",
-        company: null,
-        error: {
-          type: "not_found",
-          message:
-            "В демо-справочнике нет компании с таким ИНН. Попробуйте 7707083893, 7701234567 или 770123456789.",
-        },
-      });
     }
   }
 
@@ -196,11 +179,6 @@ export default function ProfilePage({ company, health }) {
             <Button type="submit" variant="primary" loading={lookup.state === "loading"}>
               Найти организацию
             </Button>
-            {lookup.state === "error" && lookup.error?.type === "unavailable" && (
-              <Button variant="secondary" onClick={useDemoCompany}>
-                Показать демо-данные
-              </Button>
-            )}
           </div>
         </form>
 
@@ -244,11 +222,6 @@ export default function ProfilePage({ company, health }) {
               <div className="company-result-label">Признак ликвидации</div>
               <div className="company-result-value">{lookup.company.dissolution_flag ? "Есть" : "Нет"}</div>
             </div>
-            {lookup.state === "demo" && (
-              <div className="field-full">
-                <span className="badge badge-neutral">Демо-данные: backend недоступен</span>
-              </div>
-            )}
           </div>
         )}
       </section>

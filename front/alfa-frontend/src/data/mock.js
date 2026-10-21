@@ -74,45 +74,8 @@ export function monthlyPayment(amount, annualRate, months) {
   return (sum * monthRate) / (1 - Math.pow(1 + monthRate, -term));
 }
 
-/** Демо-компания, привязанная к аккаунту предпринимателя. */
-export const DEMO_COMPANY = {
-  inn: "7707083893",
-  company_name: "ООО «Ромашка»",
-  registration_date: "2018-04-12",
-  company_status: "Действующая",
-  industry: "62",
-  industry_title: "Разработка программного обеспечения",
-  region_code: "77",
-  is_simplified_tax: true,
-  dissolution_flag: false,
-};
-
-/** Запасные данные на случай, если backend недоступен (демо-режим). */
-export const DEMO_COMPANIES = {
-  "7707083893": DEMO_COMPANY,
-  "7701234567": {
-    inn: "7701234567",
-    company_name: "ООО «Ромашка»",
-    registration_date: "2018-04-12",
-    company_status: "Действующая",
-    industry: "62",
-    industry_title: "Разработка программного обеспечения",
-    region_code: "77",
-    is_simplified_tax: true,
-    dissolution_flag: false,
-  },
-  "770123456789": {
-    inn: "770123456789",
-    company_name: "ИП Петров Иван Сергеевич",
-    registration_date: "2022-08-01",
-    company_status: "Действующий",
-    industry: "47",
-    industry_title: "Розничная торговля",
-    region_code: "77",
-    is_simplified_tax: true,
-    dissolution_flag: false,
-  },
-};
+/** ИНН реальной компании из таблицы companies, используемой в прототипе. */
+export const COMPANY_INN = "3257029840";
 
 export const BUSINESS_TYPES = [
   { value: "ip", label: "Для ИП" },
@@ -243,18 +206,6 @@ const history001 = [
   },
 ];
 
-const bankCompany = {
-  inn: "7707083893",
-  company_name: "ООО «Ромашка»",
-  reg_date: "12.04.2018",
-  ogrn: "1027700132195",
-  legal_form: "ООО",
-  industry: "62.01 (Разработка ПО)",
-  age: "5 лет",
-  region: "г. Москва",
-  usn: true,
-};
-
 /** Заявки предпринимателя. */
 export const ENTREPRENEUR_APPLICATIONS = [
   {
@@ -265,7 +216,6 @@ export const ENTREPRENEUR_APPLICATIONS = [
     productTitle: "Кредит для бизнеса без залога",
     purpose: "Развитие и масштабирование",
     status: "approved",
-    company: DEMO_COMPANY,
     offer: { amount: 2000000, rate: 13, termMonths: 24 },
     history: history001,
   },
@@ -277,7 +227,6 @@ export const ENTREPRENEUR_APPLICATIONS = [
     productTitle: "Кредит для бизнеса без залога",
     purpose: "Поддержка операционной деятельности",
     status: "manual_review",
-    company: DEMO_COMPANY,
     history: [
       {
         title: "Заявка подана",
@@ -309,7 +258,6 @@ export const ENTREPRENEUR_APPLICATIONS = [
     productTitle: "Кредит для бизнеса без залога",
     purpose: "Запуск и старт",
     status: "issued",
-    company: DEMO_COMPANY,
     offer: { amount: 1500000, rate: 13, termMonths: 18 },
     history: [
       {
@@ -337,7 +285,6 @@ export const ENTREPRENEUR_APPLICATIONS = [
     productTitle: "Овердрафт",
     purpose: "Поддержка операционной деятельности",
     status: "declined",
-    company: DEMO_COMPANY,
     declineReason:
       "Срок ведения бизнеса и долговая нагрузка не позволяют одобрить продукт на запрошенных условиях (правила демонстрационного прототипа).",
     alternatives: [
@@ -378,7 +325,7 @@ export const BANK_QUEUE = [
     termMonths: 24,
     reason: "Пограничный скоринг",
     status: "manual_review",
-    company: bankCompany,
+    companyInn: COMPANY_INN,
     finance: [
       { label: "Выручка (2025)", value: 10000000, delta: "+15%" },
       { label: "Чистая прибыль (2025)", value: 2000000, delta: "+10%" },
@@ -431,7 +378,7 @@ export const BANK_QUEUE = [
     termMonths: 18,
     reason: "Цель «Другое»",
     status: "manual_review",
-    company: bankCompany,
+    companyInn: COMPANY_INN,
     finance: [
       { label: "Выручка (2025)", value: 8200000, delta: "+8%" },
       { label: "Чистая прибыль (2025)", value: 1450000, delta: "+6%" },
@@ -481,7 +428,7 @@ export const BANK_QUEUE = [
     termMonths: 36,
     reason: "Противоречия в данных ФНС",
     status: "manual_review",
-    company: bankCompany,
+    companyInn: COMPANY_INN,
     finance: [
       { label: "Выручка (2025)", value: 12500000, delta: "-4%" },
       { label: "Чистая прибыль (2025)", value: 900000, delta: "-18%" },

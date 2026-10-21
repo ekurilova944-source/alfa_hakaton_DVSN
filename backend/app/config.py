@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     # PostgreSQL: вариант 2 — разрозненные параметры
     pghost: str = "localhost"
     pgport: int = 5432
-    pgdatabase: str = "alfa_hakaton"
+    pgdatabase: str = "alfa-hakaton"
     pguser: str = "postgres"
-    pgpassword: str | None = None
+    pgpassword: str = "postgres"
 
     @property
     def cors_origin_list(self) -> list[str]:

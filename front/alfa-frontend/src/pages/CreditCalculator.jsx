@@ -5,7 +5,6 @@ import {
   BUSINESS_AGE_TYPES,
   BUSINESS_TYPES,
   COLLATERAL_TYPES,
-  DEMO_COMPANIES,
   LOAN_PURPOSES,
   PRODUCTS,
   formatDate,
@@ -89,23 +88,6 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
     }
   }
 
-  function useDemoData() {
-    const demo = DEMO_COMPANIES[String(form.inn).trim()];
-    if (demo) {
-      setLookup({ state: "demo", company: demo, error: null });
-    } else {
-      setLookup({
-        state: "error",
-        company: null,
-        error: {
-          type: "not_found",
-          message:
-            "В демо-справочнике нет компании с таким ИНН. Попробуйте 7707083893 или 7701234567.",
-        },
-      });
-    }
-  }
-
   function validate() {
     const errors = {};
     if (!/^\d{10}(\d{2})?$/.test(String(form.inn).trim())) {
@@ -144,7 +126,7 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
       revenue: Number(form.revenue),
       profit: Number(form.profit),
       obligations: Number(form.obligations),
-      revenueSource: lookup.state === "demo" ? "demo" : lookup.state === "ok" ? "api" : "manual",
+      revenueSource: lookup.state === "ok" ? "api" : "manual",
     });
     setIsSubmitting(false);
   }
@@ -363,11 +345,6 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
                           >
                             Найти организацию
                           </Button>
-                          {lookup.state === "error" && lookup.error?.type === "unavailable" && (
-                            <Button variant="ghost" onClick={useDemoData}>
-                              Демо-данные
-                            </Button>
-                          )}
                         </div>
                       </div>
 
@@ -448,12 +425,6 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
                         <div>
                           <div className="company-result-label">УСН</div>
                           <div className="company-result-value">{lookup.company.is_simplified_tax ? "Да" : "Нет"}</div>
-                        </div>
-                        <div>
-                          <div className="company-result-label">Источник</div>
-                          <div className="company-result-value">
-                            {lookup.state === "demo" ? "демо-данные" : "API / PostgreSQL"}
-                          </div>
                         </div>
                       </div>
                     )}

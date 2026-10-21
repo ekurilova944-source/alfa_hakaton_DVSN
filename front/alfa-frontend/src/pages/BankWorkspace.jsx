@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   EmptyState,
@@ -7,6 +7,7 @@ import {
   Tabs,
   Timeline,
 } from "../components/ui.jsx";
+import { getCompany } from "../api.js";
 import { formatDate, formatMoney, formatMonths } from "../data/mock.js";
 
 const TABS = [
@@ -23,7 +24,7 @@ const DECISION_OPTIONS = [
   { id: "alternative", label: "Альтернативные условия" },
 ];
 
-function BankApplicationPanel({ application, onDecision }) {
+function BankApplicationPanel({ application, company, companyError, isCompanyLoading, onDecision }) {
   const [activeTab, setActiveTab] = useState("company");
   const [decision, setDecision] = useState("");
   const [reason, setReason] = useState("");
@@ -51,7 +52,7 @@ function BankApplicationPanel({ application, onDecision }) {
       <div className="bank-detail-head">
         <h2 className="bank-detail-title">Заявка {application.id}</h2>
         <p className="bank-detail-sub">
-          {application.company.company_name} • {formatMoney(application.amount)} •{" "}
+          {company ? company.company_name : "Компания"} • {formatMoney(application.amount)} •{" "}
           {formatMonths(application.termMonths)}
         </p>
       </div>
@@ -61,41 +62,43 @@ function BankApplicationPanel({ application, onDecision }) {
       <div className="bank-detail-body">
         {activeTab === "company" && (
           <>
-            <h3 className="subsection-title">{application.company.company_name}</h3>
-            <div className="readonly-grid">
-              <div>
-                <div className="readonly-label">ИНН</div>
-                <div className="readonly-value">{application.company.inn}</div>
-              </div>
-              <div>
-                <div className="readonly-label">ОГРН</div>
-                <div className="readonly-value">{application.company.ogrn}</div>
-              </div>
-              <div>
-                <div className="readonly-label">Организационно-правовая форма</div>
-                <div className="readonly-value">{application.company.legal_form}</div>
-              </div>
-              <div>
-                <div className="readonly-label">Основной ОКВЭД</div>
-                <div className="readonly-value">{application.company.industry}</div>
-              </div>
-              <div>
-                <div className="readonly-label">Регион</div>
-                <div className="readonly-value">{application.company.region}</div>
-              </div>
-              <div>
-                <div className="readonly-label">Возраст бизнеса</div>
-                <div className="readonly-value">{application.company.age}</div>
-              </div>
-              <div>
-                <div className="readonly-label">УСН</div>
-                <div className="readonly-value">{application.company.usn ? "Да" : "Нет"}</div>
-              </div>
-              <div>
-                <div className="readonly-label">Дата регистрации</div>
-                <div className="readonly-value">{application.company.reg_date}</div>
-              </div>
-            </div>
+            {isCompanyLoading && <p className="muted-sm">Загрузка данных компании…</p>}
+            {companyError && <div className="notice notice-warn">{companyError}</div>}
+            {company && (
+              <>
+                <h3 className="subsection-title">{company.company_name || "Компания без названия"}</h3>
+                <div className="readonly-grid">
+                  <div>
+                    <div className="readonly-label">ИНН</div>
+                    <div className="readonly-value">{company.inn}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">Статус компании</div>
+                    <div className="readonly-value">{company.company_status || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">Дата регистрации</div>
+                    <div className="readonly-value">{formatDate(company.registration_date)}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">Отрасль (код)</div>
+                    <div className="readonly-value">{company.industry || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">Регион (код)</div>
+                    <div className="readonly-value">{company.region_code || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">УСН</div>
+                    <div className="readonly-value">{company.is_simplified_tax ? "Да" : "Нет"}</div>
+                  </div>
+                  <div>
+                    <div className="readonly-label">Признак ликвидации</div>
+                    <div className="readonly-value">{company.dissolution_flag ? "Есть" : "Нет"}</div>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -280,6 +283,30 @@ export default function BankWorkspace({ queue, onDecision }) {
     ? selectedId
     : (queue[0]?.id ?? null);
   const selected = queue.find((item) => item.id === effectiveSelectedId) ?? null;
+  const selectedCompanyInn = selected?.companyInn ?? null;
+
+  const [companyState, setCompanyState] = useState({ inn: null, company: null, error: "" });
+
+  const company = companyState.inn === selectedCompanyInn ? companyState.company : null;
+  const companyError = companyState.inn === selectedCompanyInn ? companyState.error : "";
+  const isCompanyLoading =
+    Boolean(selectedCompanyInn) && companyState.inn !== selectedCompanyInn && !companyError;
+
+  useEffect(() => {
+    if (!selectedCompanyInn) return undefined;
+    let active = true;
+    getCompany(selectedCompanyInn).then((result) => {
+      if (!active) return;
+      setCompanyState(
+        result.ok
+          ? { inn: selectedCompanyInn, company: result.company, error: "" }
+          : { inn: selectedCompanyInn, company: null, error: result.message }
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedCompanyInn]);
 
   return (
     <div className="page">
@@ -325,6 +352,9 @@ export default function BankWorkspace({ queue, onDecision }) {
             <BankApplicationPanel
               key={selected.id}
               application={selected}
+              company={company}
+              companyError={companyError}
+              isCompanyLoading={isCompanyLoading}
               onDecision={onDecision}
             />
           )}

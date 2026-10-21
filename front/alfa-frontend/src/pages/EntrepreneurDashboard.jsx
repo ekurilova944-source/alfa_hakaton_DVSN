@@ -74,7 +74,7 @@ export default function EntrepreneurDashboard({
           <div>
             <div className="readonly-label">Налоговый режим</div>
             <div className="readonly-value">
-              {company?.is_simplified_tax ? "УСН" : "ОСНО / не указан"}
+              {company ? (company.is_simplified_tax ? "УСН" : "ОСНО / не указан") : "—"}
             </div>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { checkHealth, getCompany } from "./api.js";
 import { ApiStatus, Button, Toast } from "./components/ui.jsx";
 import {
   BANK_QUEUE,
-  DEMO_COMPANY,
+  COMPANY_INN,
   ENTREPRENEUR_APPLICATIONS,
   formatMoney,
 } from "./data/mock.js";
@@ -70,7 +70,7 @@ export default function App() {
   const [applications, setApplications] = useState(loadApplications);
   const [queue, setQueue] = useState(BANK_QUEUE);
   const [selectedApplicationId, setSelectedApplicationId] = useState(null);
-  const [company, setCompany] = useState(DEMO_COMPANY);
+  const [company, setCompany] = useState(null);
   const [health, setHealth] = useState(null);
   const [toast, setToast] = useState(null);
   const [isApplicationsLoading, setIsApplicationsLoading] = useState(true);
@@ -119,7 +119,7 @@ export default function App() {
   useEffect(() => {
     if (session?.role !== "business") return;
     let active = true;
-    getCompany(DEMO_COMPANY.inn).then((result) => {
+    getCompany(COMPANY_INN).then((result) => {
       if (active && result.ok) setCompany(result.company);
     });
     return () => {
@@ -132,11 +132,7 @@ export default function App() {
   }
 
   function handleLogin({ login, role }) {
-    setSession({
-      login,
-      role,
-      name: role === "employee" ? "Сотрудник банка" : DEMO_COMPANY.company_name,
-    });
+    setSession({ login, role });
     setView(role === "employee" ? "bank" : "applications");
   }
 
@@ -163,7 +159,6 @@ export default function App() {
       productTitle: draft.product.title,
       purpose: draft.purpose,
       status: "processing",
-      company: draft.company || DEMO_COMPANY,
       requested: {
         inn: draft.inn,
         revenue: draft.revenue,
@@ -304,7 +299,9 @@ export default function App() {
             <div className="user-chip">
               <span className="user-avatar">{isEmployee ? "С" : "Р"}</span>
               <div>
-                <div className="user-name">{session.name}</div>
+                <div className="user-name">
+                  {isEmployee ? "Сотрудник банка" : company?.company_name || "Компания"}
+                </div>
                 <div className="user-role">
                   {isEmployee ? "Роль: сотрудник банка" : "Роль: предприниматель"}
                 </div>
