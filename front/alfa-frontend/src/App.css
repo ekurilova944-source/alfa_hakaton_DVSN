@@ -1599,3 +1599,16 @@
     padding: 14px 16px;
   }
 }
+
+/* Read-only финансовые поля (загруженные из БД) */
+.input.is-readonly {
+  background: #eef0f3;
+  color: #44546a;
+  cursor: default;
+}
+
+.input.is-readonly:focus {
+  border-color: transparent;
+  box-shadow: none;
+  background: #eef0f3;
+}

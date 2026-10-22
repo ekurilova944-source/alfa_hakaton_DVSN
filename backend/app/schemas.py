@@ -85,3 +85,36 @@ class FinancialStatement(FinancialStatementCreate):
     """Сохранённая запись ``financial_statements``."""
 
     financial_id: int
+
+
+class LoanProduct(BaseModel):
+    """Кредитный продукт из таблицы ``loan_catalog``."""
+
+    product_id: int
+    product_name: str
+    description: str | None = None
+    business_category: str
+    min_amount: float
+    max_amount: float
+    min_term_months: int
+    max_term_months: int
+    percent: float
+    loan_purpose: str | None = None
+    is_active: bool
+    business_age: int
+    min_credit_rating: int
+
+
+class LoginRequest(BaseModel):
+    """Данные для входа в систему."""
+
+    username: str = Field(min_length=1, max_length=100, examples=["client"])
+    password: str = Field(min_length=1, examples=["client"])
+
+
+class AuthUser(BaseModel):
+    """Успешно авторизованный пользователь из таблицы ``login``."""
+
+    username: str
+    profile_type: Literal["business", "employee"]
+    company_inn: str | None = None

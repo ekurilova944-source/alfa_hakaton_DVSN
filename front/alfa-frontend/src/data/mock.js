@@ -82,106 +82,26 @@ export const BUSINESS_TYPES = [
   { value: "ooo", label: "Для ООО" },
 ];
 
-export const COLLATERAL_TYPES = [
-  { value: "none", label: "Без залога" },
-  { value: "with", label: "С залогом" },
-];
-
 export const BUSINESS_AGE_TYPES = [
   { value: "more3", label: "Более 3 месяцев" },
   { value: "less3", label: "До 3 месяцев" },
 ];
 
 export const LOAN_PURPOSES = [
-  "Запуск и старт",
-  "Поддержка операционной деятельности",
-  "Развитие и масштабирование",
-  "Стратегические цели и защита бизнеса",
-  "Другое",
+  { value: "working_capital", label: "Пополнение оборотных средств" },
+  { value: "equipment", label: "Покупка оборудования" },
+  { value: "business_expansion", label: "Развитие бизнеса" },
+  { value: "refinancing", label: "Рефинансирование" },
+  { value: "other", label: "Другое" },
 ];
 
-/**
- * Продукты демонстрационного каталога.
- * collateral: none | with; minBusinessAge — в месяцах.
- */
-export const PRODUCTS = [
-  {
-    id: 1,
-    title: "Кредит для бизнеса без залога",
-    subtitle: "На развитие бизнеса",
-    icon: "💼",
-    rate: 19,
-    collateral: "none",
-    businessTypes: ["ip", "ooo"],
-    minBusinessAge: 3,
-    minAmount: 50000,
-    maxAmount: 15000000,
-    minTermMonths: 12,
-    maxTermMonths: 120,
-    calculable: true,
-  },
-  {
-    id: 2,
-    title: "Возобновляемая кредитная линия без залога",
-    subtitle:
-      "Пользуйтесь деньгами частями в рамках лимита — проценты начисляются только на использованную часть.",
-    icon: "📈",
-    rate: 14.5,
-    collateral: "none",
-    businessTypes: ["ip", "ooo"],
-    minBusinessAge: 6,
-    minAmount: 300000,
-    maxAmount: 15000000,
-    minTermMonths: 12,
-    maxTermMonths: 36,
-    calculable: false,
-  },
-  {
-    id: 3,
-    title: "Овердрафт",
-    subtitle: "Для покрытия кассовых разрывов",
-    icon: "💳",
-    rate: 16,
-    collateral: "none",
-    businessTypes: ["ip", "ooo"],
-    minBusinessAge: 12,
-    minAmount: 100000,
-    maxAmount: 5000000,
-    minTermMonths: 12,
-    maxTermMonths: 24,
-    calculable: false,
-  },
-  {
-    id: 4,
-    title: "Кредит под залог недвижимости",
-    subtitle: "Длинные деньги на развитие под залог коммерческой недвижимости",
-    icon: "🏢",
-    rate: 13.5,
-    collateral: "with",
-    businessTypes: ["ip", "ooo"],
-    minBusinessAge: 12,
-    minAmount: 1000000,
-    maxAmount: 50000000,
-    minTermMonths: 24,
-    maxTermMonths: 120,
-    calculable: true,
-  },
-  {
-    id: 5,
-    title: "Кредит под залог оборудования",
-    subtitle: "Обновление производственной базы под залог техники",
-    icon: "🏭",
-    rate: 15,
-    collateral: "with",
-    businessTypes: ["ip", "ooo"],
-    minBusinessAge: 6,
-    minAmount: 500000,
-    maxAmount: 20000000,
-    minTermMonths: 12,
-    maxTermMonths: 60,
-    calculable: true,
-  },
-];
+export const PURPOSE_ICONS = {
+  working_capital: "💼",
+  equipment: "🏭",
+  business_expansion: "📈",
+  refinancing: "🔄",
+  other: "💳",
+};
 
 const history001 = [
   {
@@ -197,7 +117,7 @@ const history001 = [
   {
     title: "Скоринг",
     date: "15.10.2026 в 10:06",
-    desc: "Рассчитан кредитный рейтинг: 780 баллов. Категория риска: низкая.",
+    desc: "Рассчитана скоринговая оценка: 780 баллов. Категория риска: низкая.",
   },
   {
     title: "Принятие решения",
@@ -362,7 +282,7 @@ export const BANK_QUEUE = [
       {
         title: "Скоринг завершён",
         date: "24.10.2026 в 14:28",
-        desc: "Рассчитан кредитный рейтинг и факторы риска.",
+        desc: "Рассчитана скоринговая оценка и факторы риска.",
       },
       {
         title: "Заявка подана",
@@ -412,7 +332,7 @@ export const BANK_QUEUE = [
       {
         title: "Скоринг завершён",
         date: "25.10.2026 в 09:10",
-        desc: "Рассчитан кредитный рейтинг 720 из 1000.",
+        desc: "Рассчитана скоринговая оценка 720 из 1000.",
       },
       {
         title: "Заявка подана",
@@ -472,7 +392,7 @@ export const BANK_QUEUE = [
       {
         title: "Скоринг завершён",
         date: "26.10.2026 в 11:00",
-        desc: "Рассчитан кредитный рейтинг 480 из 1000.",
+        desc: "Рассчитана скоринговая оценка 480 из 1000.",
       },
       {
         title: "Заявка подана",

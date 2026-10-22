@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
 
 from . import db
 from .config import get_settings
 from .schemas import (
+    AuthUser,
     Company,
     ErrorResponse,
     FinancialStatement,
     FinancialStatementCreate,
     HealthResponse,
+    LoanProduct,
+    LoginRequest,
     ServiceInfo,
 )
 
@@ -74,6 +79,57 @@ FINANCIAL_INSERT = f"""
 
 COMPANY_EXISTS_SQL = "SELECT 1 FROM companies WHERE inn = %(inn)s"
 
+LOGIN_SELECT = """
+    SELECT username,
+           password,
+           profile_type,
+           company_inn
+      FROM login
+     WHERE username = %(username)s
+"""
+
+
+def _hash_password(password: str) -> str:
+    """SHA-256-хеш пароля (пароли в БД хранятся только в виде хеша)."""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+LOAN_PRODUCTS_SELECT = """
+    SELECT product_id,
+           product_name,
+           description,
+           business_category,
+           min_amount::float8 AS min_amount,
+           max_amount::float8 AS max_amount,
+           min_term_months,
+           max_term_months,
+           percent::float8 AS percent,
+           loan_purpose,
+           is_active,
+           business_age,
+           min_credit_rating
+      FROM loan_catalog
+     WHERE is_active = TRUE
+       AND business_category IN (%(business_category)s, 'both')
+       AND (
+            CAST(%(purpose)s AS varchar) IS NULL
+            OR loan_purpose = %(purpose)s
+            OR loan_purpose = 'other'
+       )
+       AND min_amount <= %(amount)s
+       AND max_amount >= %(amount)s
+       AND min_term_months <= %(term_months)s
+       AND max_term_months >= %(term_months)s
+       AND (
+            CAST(%(business_age_months)s AS integer) IS NULL
+            OR business_age <= %(business_age_months)s
+       )
+       AND (
+            CAST(%(credit_rating)s AS integer) IS NULL
+            OR min_credit_rating <= %(credit_rating)s
+       )
+     ORDER BY percent ASC, product_id
+"""
+
 FINANCIAL_SELECT = f"""
     SELECT financial_id, inn, report_year, {_FINANCIAL_COLUMNS}
       FROM financial_statements
@@ -86,7 +142,8 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "Минимальный backend для кредитования ИП/ООО: проверка состояния сервиса, "
-        "карточка компании по ИНН и сохранение годовой финансовой отчётности."
+        "карточка компании по ИНН, подбор кредитных продуктов и сохранение годовой "
+        "финансовой отчётности."
     ),
 )
 
@@ -116,6 +173,37 @@ def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         database="ok" if db.ping() else "unavailable",
+    )
+
+
+@app.post(
+    "/api/auth/login",
+    response_model=AuthUser,
+    summary="Авторизация по логину и паролю",
+    responses={
+        401: {"model": ErrorResponse, "description": "Неверный логин или пароль"},
+        422: {"model": ErrorResponse, "description": "Некорректные данные запроса"},
+        503: {"model": ErrorResponse, "description": "База данных недоступна"},
+    },
+    tags=["auth"],
+)
+def login(payload: LoginRequest) -> AuthUser:
+    """Проверяет логин и пароль по таблице ``login`` и возвращает профиль пользователя."""
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(LOGIN_SELECT, {"username": payload.username})
+            row = cur.fetchone()
+    except (psycopg.Error, OSError) as exc:
+        logger.error("Ошибка БД при авторизации пользователя: %s", exc, exc_info=True)
+        raise HTTPException(status_code=503, detail="База данных недоступна") from exc
+
+    if row is None or not hmac.compare_digest(row["password"], _hash_password(payload.password)):
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+
+    return AuthUser(
+        username=row["username"],
+        profile_type=row["profile_type"],
+        company_inn=row["company_inn"],
     )
 
 
@@ -160,6 +248,78 @@ def get_company(
         raise HTTPException(status_code=404, detail="Компания не найдена")
 
     return Company(**row)
+
+
+@app.get(
+    "/api/loan-products",
+    response_model=list[LoanProduct],
+    summary="Подбор активных кредитных продуктов",
+    responses={
+        422: {"model": ErrorResponse, "description": "Некорректные параметры подбора"},
+        503: {"model": ErrorResponse, "description": "База данных недоступна"},
+    },
+    tags=["loan_products"],
+)
+def get_loan_products(
+    amount: Annotated[
+        float,
+        Query(gt=0, description="Запрашиваемая сумма кредита"),
+    ],
+    term_months: Annotated[
+        int,
+        Query(gt=0, description="Запрашиваемый срок кредита в месяцах"),
+    ],
+    business_category: Annotated[
+        Literal["ip", "ooo", "both"],
+        Query(description="Категория бизнеса заявителя"),
+    ] = "both",
+    purpose: Annotated[
+        Literal[
+            "working_capital",
+            "equipment",
+            "business_expansion",
+            "refinancing",
+            "other",
+        ]
+        | None,
+        Query(description="Код цели кредитования из loan_catalog, например working_capital"),
+    ] = None,
+    business_age_months: Annotated[
+        int | None,
+        Query(ge=0, description="Возраст бизнеса в месяцах"),
+    ] = None,
+    credit_rating: Annotated[
+        int | None,
+        Query(
+            ge=0,
+            le=1000,
+            description="Рассчитанный скоринг заявителя 0–1000 (не выбирается клиентом)",
+        ),
+    ] = None,
+) -> list[LoanProduct]:
+    """Возвращает активные продукты из ``loan_catalog``, подходящие под параметры.
+
+    Универсальные продукты с ``loan_purpose = 'other'`` подходят под любую цель.
+    Если ничего не подходит, возвращается пустой список.
+    """
+    params = {
+        "amount": amount,
+        "term_months": term_months,
+        "business_category": business_category,
+        "purpose": purpose,
+        "business_age_months": business_age_months,
+        "credit_rating": credit_rating,
+    }
+
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(LOAN_PRODUCTS_SELECT, params)
+            rows = cur.fetchall()
+    except (psycopg.Error, OSError) as exc:
+        logger.error("Ошибка БД при подборе кредитных продуктов: %s", exc, exc_info=True)
+        raise HTTPException(status_code=503, detail="База данных недоступна") from exc
+
+    return [LoanProduct(**row) for row in rows]
 
 
 @app.post(

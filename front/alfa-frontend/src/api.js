@@ -65,6 +65,65 @@ export async function checkHealth() {
 }
 
 /**
+ * Авторизация по логину и паролю через API (таблица login в PostgreSQL).
+ * Возвращает { ok: true, user } либо { ok: false, type, message }.
+ * type: invalid_credentials | invalid | unavailable | error
+ */
+export async function loginUser(username, password) {
+  const credentials = {
+    username: String(username || "").trim(),
+    password: String(password || ""),
+  };
+
+  let result;
+  try {
+    result = await request("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credentials),
+    });
+  } catch {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: "API недоступен. Проверьте, запущен ли backend на " + API_URL + ".",
+    };
+  }
+
+  const { response, payload } = result;
+
+  if (response.ok && payload) {
+    return { ok: true, user: payload };
+  }
+  if (response.status === 401) {
+    return {
+      ok: false,
+      type: "invalid_credentials",
+      message: normalizeDetail(payload) || "Неверный логин или пароль",
+    };
+  }
+  if (response.status === 422) {
+    return {
+      ok: false,
+      type: "invalid",
+      message: normalizeDetail(payload) || "Проверьте логин и пароль",
+    };
+  }
+  if (response.status === 503) {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: normalizeDetail(payload) || "База данных недоступна",
+    };
+  }
+  return {
+    ok: false,
+    type: "error",
+    message: normalizeDetail(payload) || "Не удалось выполнить вход",
+  };
+}
+
+/**
  * Получение компании по ИНН.
  * Возвращает { ok: true, company } либо { ok: false, type, message }.
  * type: not_found | invalid | unavailable | error
@@ -249,4 +308,112 @@ export async function getLatestFinancialStatement(inn) {
     type: "error",
     message: normalizeDetail(payload) || "Не удалось получить отчётность",
   };
+}
+
+/**
+ * Все годовые отчёты компании (по убыванию года).
+ * Возвращает { ok: true, statements } либо { ok: false, type, message }.
+ * type: invalid | unavailable | error
+ */
+export async function getFinancialStatements(inn) {
+  const value = String(inn || "").trim();
+
+  if (!/^\d{10}(\d{2})?$/.test(value)) {
+    return { ok: false, type: "invalid", message: "ИНН должен состоять из 10 или 12 цифр" };
+  }
+
+  let result;
+  try {
+    result = await request(`/api/financial-statements/${value}`);
+  } catch {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: "API недоступен. Проверьте, запущен ли backend на " + API_URL + ".",
+    };
+  }
+
+  const { response, payload } = result;
+
+  if (response.ok && Array.isArray(payload)) {
+    return { ok: true, statements: payload };
+  }
+  if (response.status === 422) {
+    return { ok: false, type: "invalid", message: normalizeDetail(payload) || "Некорректный ИНН" };
+  }
+  if (response.status === 503) {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: normalizeDetail(payload) || "База данных недоступна",
+    };
+  }
+  return {
+    ok: false,
+    type: "error",
+    message: normalizeDetail(payload) || "Не удалось получить отчётность",
+  };
+}
+
+/**
+ * Подбор активных кредитных продуктов из таблицы loan_catalog.
+ * Возвращает { ok: true, products } либо { ok: false, type, message }.
+ * type: invalid | unavailable | error
+ */
+export async function getLoanProducts({
+  amount,
+  termMonths,
+  businessCategory,
+  purpose,
+  businessAgeMonths,
+}) {
+  const params = new URLSearchParams({
+    amount: String(amount),
+    term_months: String(termMonths),
+    business_category: businessCategory,
+  });
+
+  if (purpose && purpose !== "all") params.set("purpose", purpose);
+  if (businessAgeMonths !== null && businessAgeMonths !== undefined) {
+    params.set("business_age_months", String(businessAgeMonths));
+  }
+
+  let result;
+  try {
+    result = await request(`/api/loan-products?${params.toString()}`);
+  } catch {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: "API недоступен. Проверьте, запущен ли backend на " + API_URL + ".",
+    };
+  }
+
+  const { response, payload } = result;
+
+  if (response.status === 422) {
+    return {
+      ok: false,
+      type: "invalid",
+      message: normalizeDetail(payload) || "Некорректные параметры подбора",
+    };
+  }
+
+  if (response.status === 503) {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: normalizeDetail(payload) || "База данных недоступна",
+    };
+  }
+
+  if (!response.ok || !Array.isArray(payload)) {
+    return {
+      ok: false,
+      type: "error",
+      message: normalizeDetail(payload) || "Не удалось загрузить кредитные продукты",
+    };
+  }
+
+  return { ok: true, products: payload };
 }

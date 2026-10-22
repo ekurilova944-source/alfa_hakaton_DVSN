@@ -61,6 +61,7 @@ CREATE TABLE loan_catalog (
     loan_purpose VARCHAR(50),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     business_age INTEGER NOT NULL DEFAULT 0,
+    min_credit_rating INTEGER NOT NULL DEFAULT 400,
 
     CONSTRAINT chk_loan_catalog_business_category
         CHECK (business_category IN ('ip', 'ooo', 'both')),

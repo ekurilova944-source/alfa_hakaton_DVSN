@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiStatus, Button, Field } from "../components/ui.jsx";
 import { formatDate } from "../data/mock.js";
-import { createFinancialStatement, getCompany } from "../api.js";
+import { createFinancialStatement, getCompany, getFinancialStatements } from "../api.js";
 
 const EMPTY_FORM = {
   lastName: "",
@@ -46,6 +46,23 @@ const FINANCIAL_FIELDS = [
   { key: "balance_operating", label: "Операционный баланс, ₽" },
 ];
 
+function emptyFinancial(reportYear) {
+  return {
+    report_year: String(reportYear),
+    ...Object.fromEntries(FINANCIAL_FIELDS.map((field) => [field.key, ""])),
+  };
+}
+
+function financialFromStatement(statement) {
+  const values = { report_year: String(statement.report_year) };
+  for (const field of FINANCIAL_FIELDS) {
+    const raw = statement[field.key];
+    values[field.key] =
+      raw === null || raw === undefined ? "" : String(Number(raw));
+  }
+  return values;
+}
+
 export default function ProfilePage({ company, health }) {
   const [formData, setFormData] = useState(loadProfile);
   const [saved, setSaved] = useState(false);
@@ -53,12 +70,47 @@ export default function ProfilePage({ company, health }) {
   const [lookupInn, setLookupInn] = useState(company?.inn || "");
   const [lookup, setLookup] = useState({ state: "idle", company: null, error: null });
 
-  const [financial, setFinancial] = useState(() => ({
-    report_year: String(new Date().getFullYear()),
-    ...Object.fromEntries(FINANCIAL_FIELDS.map((field) => [field.key, ""])),
-  }));
+  const [financialRows, setFinancialRows] = useState({ inn: null, rows: [], error: "" });
+  const [selectedYear, setSelectedYear] = useState("new");
+  const [financial, setFinancial] = useState(() => emptyFinancial(new Date().getFullYear()));
   const [financialErrors, setFinancialErrors] = useState({});
   const [financialStatus, setFinancialStatus] = useState({ state: "idle", message: "" });
+  const [financialReload, setFinancialReload] = useState(0);
+
+  useEffect(() => {
+    const inn = company?.inn;
+    if (!inn) return undefined;
+    let active = true;
+    getFinancialStatements(inn).then((result) => {
+      if (!active) return;
+      if (!result.ok) {
+        setFinancialRows({ inn, rows: [], error: result.message });
+        setSelectedYear("new");
+        setFinancial(emptyFinancial(new Date().getFullYear()));
+        return;
+      }
+      setFinancialRows({ inn, rows: result.statements, error: "" });
+      if (result.statements.length > 0) {
+        const latest = result.statements[0];
+        setSelectedYear(String(latest.report_year));
+        setFinancial(financialFromStatement(latest));
+      } else {
+        setSelectedYear("new");
+        setFinancial(emptyFinancial(new Date().getFullYear()));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [company?.inn, financialReload]);
+
+  const financialRowsForCompany =
+    financialRows.inn === company?.inn ? financialRows.rows : [];
+  const financialLoadError =
+    financialRows.inn === company?.inn ? financialRows.error : "";
+  const isFinancialLoading =
+    Boolean(company?.inn) && financialRows.inn !== company?.inn && !financialLoadError;
+  const isExistingReport = selectedYear !== "new";
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -90,8 +142,29 @@ export default function ProfilePage({ company, health }) {
     setFinancial((previous) => ({ ...previous, [name]: value }));
   }
 
+  function handleFinancialYearChange(event) {
+    const value = event.target.value;
+    setFinancialErrors({});
+    setFinancialStatus({ state: "idle", message: "" });
+    setSelectedYear(value);
+    if (value === "new") {
+      setFinancial(emptyFinancial(new Date().getFullYear()));
+      return;
+    }
+    const statement = financialRowsForCompany.find(
+      (row) => String(row.report_year) === value
+    );
+    if (statement) setFinancial(financialFromStatement(statement));
+  }
+
+  function handleFinancialRetry() {
+    setFinancialRows({ inn: null, rows: [], error: "" });
+    setFinancialReload((value) => value + 1);
+  }
+
   async function handleFinancialSubmit(event) {
     event.preventDefault();
+    if (isExistingReport) return;
 
     const inn = company?.inn;
     if (!inn) {
@@ -106,6 +179,10 @@ export default function ProfilePage({ company, health }) {
     const reportYear = Number(financial.report_year);
     if (!financial.report_year || !Number.isInteger(reportYear) || reportYear < 1900) {
       errors.report_year = "Укажите отчётный год (не ранее 1900)";
+    } else if (
+      financialRowsForCompany.some((row) => Number(row.report_year) === reportYear)
+    ) {
+      errors.report_year = "Отчётность за этот год уже есть — выберите её в списке годов";
     }
 
     const numericValues = {};
@@ -137,9 +214,20 @@ export default function ProfilePage({ company, health }) {
     });
 
     if (result.ok) {
+      const created = result.statement;
+      setFinancialRows((previous) => ({
+        inn: previous.inn,
+        rows: [
+          created,
+          ...previous.rows.filter((row) => row.report_year !== created.report_year),
+        ],
+        error: "",
+      }));
+      setSelectedYear(String(created.report_year));
+      setFinancial(financialFromStatement(created));
       setFinancialStatus({
         state: "ok",
-        message: `Отчётность за ${result.statement.report_year} год сохранена (ID ${result.statement.financial_id})`,
+        message: `Отчётность за ${created.report_year} год сохранена в БД и теперь доступна только для чтения`,
       });
     } else {
       setFinancialStatus({ state: "error", message: result.message });
@@ -316,8 +404,25 @@ export default function ProfilePage({ company, health }) {
       <section className="card card-pad-lg" style={{ marginTop: 20 }}>
         <h2 className="section-title">Финансовая отчётность</h2>
         <p className="page-subtitle" style={{ marginBottom: 18 }}>
-          Годовой отчёт сохраняется в PostgreSQL (таблица financial_statements) через API.
+          Годовая отчётность хранится в PostgreSQL (таблица financial_statements) и загружается через API.
         </p>
+
+        {isFinancialLoading && (
+          <div className="notice" style={{ marginBottom: 16 }}>
+            Загружаем сохранённую отчётность из БД…
+          </div>
+        )}
+
+        {financialLoadError && (
+          <div className="notice notice-warn" style={{ marginBottom: 16 }}>
+            {financialLoadError}
+            <div style={{ marginTop: 10 }}>
+              <Button variant="secondary" size="sm" onClick={handleFinancialRetry}>
+                Повторить загрузку
+              </Button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleFinancialSubmit} noValidate>
           <div className="profile-grid">
@@ -329,18 +434,48 @@ export default function ProfilePage({ company, health }) {
                 {company?.inn || "Компания не загружена"}
               </div>
             </Field>
-            <Field label="Отчётный год" htmlFor="financialYear" error={financialErrors.report_year}>
-              <input
-                id="financialYear"
-                className={`input${financialErrors.report_year ? " has-error" : ""}`}
-                name="report_year"
-                value={financial.report_year}
-                onChange={handleFinancialChange}
-                placeholder="Например, 2025"
-                inputMode="numeric"
-              />
+
+            <Field
+              label="Отчётность за год"
+              htmlFor="financialYearSelect"
+              error={financialErrors.report_year}
+            >
+              <div className="col" style={{ gap: 8 }}>
+                <select
+                  id="financialYearSelect"
+                  className="input"
+                  value={selectedYear}
+                  onChange={handleFinancialYearChange}
+                  disabled={isFinancialLoading || !company?.inn}
+                >
+                  {financialRowsForCompany.map((row) => (
+                    <option key={row.report_year} value={String(row.report_year)}>
+                      {row.report_year} — сохранена в БД
+                    </option>
+                  ))}
+                  <option value="new">＋ Добавить за новый год</option>
+                </select>
+                {!isExistingReport && (
+                  <input
+                    id="financialYear"
+                    className={`input${financialErrors.report_year ? " has-error" : ""}`}
+                    name="report_year"
+                    value={financial.report_year}
+                    onChange={handleFinancialChange}
+                    placeholder="Например, 2027"
+                    inputMode="numeric"
+                  />
+                )}
+              </div>
             </Field>
           </div>
+
+          {isExistingReport && (
+            <div className="notice" style={{ marginTop: 16 }}>
+              Отчётность за {selectedYear} год уже сохранена в БД — показатели загружены
+              из базы и недоступны для редактирования.
+            </div>
+          )}
 
           <h3 className="profile-section-title" style={{ marginTop: 24 }}>
             Показатели отчётности
@@ -355,22 +490,26 @@ export default function ProfilePage({ company, health }) {
               >
                 <input
                   id={`financial-${field.key}`}
-                  className={`input${financialErrors[field.key] ? " has-error" : ""}`}
+                  className={`input${financialErrors[field.key] ? " has-error" : ""}${
+                    isExistingReport ? " is-readonly" : ""
+                  }`}
                   name={field.key}
                   value={financial[field.key]}
                   onChange={handleFinancialChange}
                   placeholder="0"
                   inputMode="decimal"
+                  readOnly={isExistingReport}
                 />
               </Field>
             ))}
           </div>
 
-          <p className="hint-sm" style={{ marginTop: 14 }}>
-            Все числовые показатели необязательны: незаполненные поля сохраняются как NULL.
-            Отчётность сохраняется только по ИНН компании, к которой привязан аккаунт;
-            запись за тот же год повторно не создаётся — API вернёт ошибку.
-          </p>
+          {!isExistingReport && (
+            <p className="hint-sm" style={{ marginTop: 14 }}>
+              Все числовые показатели необязательны: незаполненные поля сохраняются как NULL.
+              После сохранения отчётность за этот год будет доступна только для чтения.
+            </p>
+          )}
 
           {financialStatus.state === "error" && (
             <div className="notice notice-warn" style={{ marginTop: 14 }}>
@@ -378,19 +517,24 @@ export default function ProfilePage({ company, health }) {
             </div>
           )}
 
-          <div className="form-actions">
-            {financialStatus.state === "ok" && (
-              <span className="profile-saved">✓ {financialStatus.message}</span>
-            )}
-            <Button
-              type="submit"
-              variant="primary"
-              loading={financialStatus.state === "saving"}
-              disabled={!company?.inn}
-            >
-              Сохранить отчётность
-            </Button>
-          </div>
+          {financialStatus.state === "ok" && (
+            <div className="profile-saved" style={{ marginTop: 14 }}>
+              ✓ {financialStatus.message}
+            </div>
+          )}
+
+          {!isExistingReport && (
+            <div className="form-actions">
+              <Button
+                type="submit"
+                variant="primary"
+                loading={financialStatus.state === "saving"}
+                disabled={!company?.inn}
+              >
+                Сохранить отчётность
+              </Button>
+            </div>
+          )}
         </form>
       </section>
 

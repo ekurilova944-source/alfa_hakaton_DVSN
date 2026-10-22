@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { loginUser } from "../api.js";
 import { Button, Field } from "../components/ui.jsx";
 
 const DEMO_ACCOUNTS = [
-  { login: "client", password: "client", role: "предприниматель" },
-  { login: "bank", password: "bank", role: "сотрудник банка" },
+  { login: "client", password: "client", role: "предприниматель", note: "ИНН 4217064416" },
+  { login: "bank", password: "bank", role: "сотрудник банка", note: "" },
 ];
 
 export default function LoginPage({ onLogin }) {
@@ -38,25 +39,19 @@ export default function LoginPage({ onLogin }) {
     setError("");
     setIsLoading(true);
 
-    // Заглушка вместо запроса авторизации: механизм прототипа сохранён.
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    const result = await loginUser(login, password);
+    setIsLoading(false);
 
-    const normalized = login.trim().toLowerCase();
-    const demoError = normalized === "error" || password === "wrong";
-
-    if (demoError) {
-      setError("Неверный логин или пароль. Попробуйте снова");
-      setIsLoading(false);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    const isEmployee =
-      normalized === "bank" ||
-      normalized === "employee" ||
-      normalized.startsWith("bank");
-
-    setIsLoading(false);
-    onLogin({ login: login.trim(), role: isEmployee ? "employee" : "business" });
+    onLogin({
+      login: result.user.username,
+      role: result.user.profile_type === "employee" ? "employee" : "business",
+      companyInn: result.user.company_inn,
+    });
   }
 
   return (
@@ -143,6 +138,7 @@ export default function LoginPage({ onLogin }) {
                 {account.login} / {account.password}
               </code>{" "}
               — {account.role}
+              {account.note ? `, ${account.note}` : ""}
               {index < DEMO_ACCOUNTS.length - 1 ? "; " : "."}
             </span>
           ))}{" "}

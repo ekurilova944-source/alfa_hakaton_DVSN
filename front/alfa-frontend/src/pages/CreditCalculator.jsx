@@ -1,12 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ApiStatus, Button, EmptyState, Field, Segmented } from "../components/ui.jsx";
-import { getCompany, getLatestFinancialStatement } from "../api.js";
+import { getCompany, getLatestFinancialStatement, getLoanProducts } from "../api.js";
 import {
   BUSINESS_AGE_TYPES,
   BUSINESS_TYPES,
-  COLLATERAL_TYPES,
   LOAN_PURPOSES,
-  PRODUCTS,
+  PURPOSE_ICONS,
   formatDate,
   formatMoney,
   formatRate,
@@ -16,127 +15,233 @@ import {
 const AMOUNT_MIN = 50000;
 const AMOUNT_MAX = 30000000;
 const AMOUNT_STEP = 50000;
+const DEFAULT_AMOUNT = 4150000;
+const DEFAULT_TERM_YEARS = 3;
+const PURPOSE_ALL = "all";
 
-// Decimal приходит из API строкой ("14000000.00") — приводим к числу, пустое -> null.
-function toNumberOrNull(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const number = Number(value);
-  return Number.isNaN(number) ? null : number;
+function defaultForm(company) {
+  return {
+    inn: company?.inn || "",
+    revenue: "",
+    profit: "",
+    obligations: "",
+    purpose: LOAN_PURPOSES[0].value,
+  };
 }
 
-function formatInput(value) {
-  return value === null ? "" : String(Math.round(value));
+function readStoredProfile() {
+  try {
+    const raw = localStorage.getItem("ipProfile");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
 }
 
-function isEligible(product, amount, months) {
-  return (
-    amount >= product.minAmount &&
-    amount <= product.maxAmount &&
-    months >= product.minTermMonths &&
-    months <= product.maxTermMonths
-  );
+function normalizeProduct(product) {
+  return {
+    id: product.product_id,
+    title: product.product_name,
+    subtitle: product.description || "",
+    icon: PURPOSE_ICONS[product.loan_purpose] || "💳",
+    rate: Number(product.percent),
+    minAmount: Number(product.min_amount),
+    maxAmount: Number(product.max_amount),
+    minTermMonths: product.min_term_months,
+    maxTermMonths: product.max_term_months,
+    loanPurpose: product.loan_purpose,
+    minBusinessAge: product.business_age,
+  };
 }
 
 export default function CreditCalculator({ defaultCompany, health, onApply }) {
   const [bizType, setBizType] = useState("ip");
-  const [collateral, setCollateral] = useState("none");
   const [bizAge, setBizAge] = useState("more3");
-  const [amount, setAmount] = useState(4150000);
-  const [termYears, setTermYears] = useState(3);
+  const [purpose, setPurpose] = useState(PURPOSE_ALL);
+  const [amount, setAmount] = useState(DEFAULT_AMOUNT);
+  const [termYears, setTermYears] = useState(DEFAULT_TERM_YEARS);
 
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [detailsProductId, setDetailsProductId] = useState(null);
-  const [form, setForm] = useState({
-    inn: defaultCompany?.inn || "",
-    revenue: "",
-    profit: "",
-    obligations: "",
-    purpose: LOAN_PURPOSES[2],
-  });
+  const [form, setForm] = useState(() => defaultForm(defaultCompany));
   const [fieldErrors, setFieldErrors] = useState({});
   const [lookup, setLookup] = useState({ state: "idle", company: null, error: null });
+  const [fillStatus, setFillStatus] = useState({ state: "idle", message: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Автозаполнение из профиля: idle | loading | ok | error
-  const [profileFill, setProfileFill] = useState({ state: "idle", year: null, message: "" });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [catalog, setCatalog] = useState({ key: null, products: [], error: null });
 
   const months = termYears * 12;
-  const userAgeMonths = bizAge === "more3" ? 36 : 1;
+  const userAgeMonths = bizAge === "more3" ? 36 : 3;
 
-  const products = useMemo(
+  const queryKey = useMemo(
     () =>
-      PRODUCTS.filter(
-        (product) =>
-          product.businessTypes.includes(bizType) &&
-          product.collateral === collateral &&
-          product.minBusinessAge <= userAgeMonths
-      ),
-    [bizType, collateral, userAgeMonths]
+      JSON.stringify({
+        amount,
+        months,
+        bizType,
+        purpose,
+        userAgeMonths,
+      }),
+    [amount, months, bizType, purpose, userAgeMonths]
   );
+
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(() => {
+      getLoanProducts({
+        amount,
+        termMonths: months,
+        businessCategory: bizType,
+        purpose,
+        businessAgeMonths: userAgeMonths,
+      }).then((result) => {
+        if (!active) return;
+        setCatalog(
+          result.ok
+            ? { key: queryKey, products: result.products, error: null }
+            : { key: queryKey, products: [], error: result.message }
+        );
+      });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [queryKey, reloadKey, amount, months, bizType, purpose, userAgeMonths]);
+
+  const isCatalogLoading = catalog.key !== queryKey && !catalog.error;
+  const catalogProducts = catalog.key === queryKey ? catalog.products : [];
+  const catalogError = catalog.key === queryKey ? catalog.error : null;
+
+  const products = catalogProducts.map(normalizeProduct);
 
   const selectedProduct = products.find((product) => product.id === selectedProductId) || null;
 
-  // Подтягивает выручку, прибыль и обязательства из financial_statements (данные профиля).
-  async function fillFromProfile(inn) {
-    setProfileFill({ state: "loading", year: null, message: "" });
-    const result = await getLatestFinancialStatement(inn);
-
-    if (!result.ok) {
-      setProfileFill({ state: "error", year: null, message: result.message });
-      return;
-    }
-
-    const statement = result.statement;
-    const revenue = toNumberOrNull(statement.revenue);
-    const profit = toNumberOrNull(statement.net_profit);
-    const longDebt = toNumberOrNull(statement.longterm_debt);
-    const shortDebt = toNumberOrNull(statement.shortterm_debt);
-    const obligations =
-      longDebt === null && shortDebt === null ? null : (longDebt ?? 0) + (shortDebt ?? 0);
-
-    setFieldErrors((previous) => ({
-      ...previous,
-      revenue: undefined,
-      profit: undefined,
-      obligations: undefined,
-    }));
-    setForm((previous) => ({
-      ...previous,
-      revenue: revenue !== null ? formatInput(revenue) : previous.revenue,
-      profit: profit !== null ? formatInput(profit) : previous.profit,
-      obligations: obligations !== null ? formatInput(obligations) : previous.obligations,
-    }));
-    setProfileFill({ state: "ok", year: statement.report_year, message: "" });
-  }
-
-function resetForm(product) {
-    const inn = form.inn || defaultCompany?.inn || "";
+  function resetForm(product) {
     setSelectedProductId(product.id);
     setDetailsProductId(null);
     setFieldErrors({});
     setLookup({ state: "idle", company: null, error: null });
-    setProfileFill({ state: "idle", year: null, message: "" });
     setForm((previous) => ({
       ...previous,
-      inn,
-      revenue: "",
-      profit: "",
-      obligations: "",
+      inn: previous.inn || defaultCompany?.inn || "",
+      purpose: purpose === PURPOSE_ALL ? previous.purpose : purpose,
     }));
   }
 
   function updateField(name, value) {
     setFieldErrors((previous) => ({ ...previous, [name]: undefined }));
+    setFillStatus({ state: "idle", message: "" });
     setForm((previous) => ({ ...previous, [name]: value }));
   }
 
-  async function handleLookup() {
+  async function handleFillFromProfile() {
     setLookup({ state: "loading", company: null, error: null });
-    const result = await getCompany(form.inn);
-    if (result.ok) {
-      setLookup({ state: "ok", company: result.company, error: null });
-    } else {
-      setLookup({ state: "error", company: null, error: result });
+    setFillStatus({ state: "idle", message: "" });
+
+    const profile = readStoredProfile();
+    const inn = String(profile.inn || defaultCompany?.inn || form.inn || "").trim();
+    if (!inn) {
+      setLookup({
+        state: "error",
+        company: null,
+        error: { message: "Профиль не заполнен: укажите ИНН вручную." },
+      });
+      return;
     }
+
+    const [companyResult, statementResult] = await Promise.all([
+      getCompany(inn),
+      getLatestFinancialStatement(inn),
+    ]);
+
+    const updates = { inn };
+    if (statementResult.ok) {
+      const statement = statementResult.statement;
+      updates.revenue =
+        statement.revenue === null || statement.revenue === undefined
+          ? ""
+          : String(Number(statement.revenue));
+      updates.profit =
+        statement.net_profit === null || statement.net_profit === undefined
+          ? ""
+          : String(Number(statement.net_profit));
+      updates.obligations =
+        statement.shortterm_liab === null || statement.shortterm_liab === undefined
+          ? ""
+          : String(Number(statement.shortterm_liab));
+    } else {
+      // если в localStorage профиля когда-то появятся финансовые поля, используем их
+      if (profile.revenue !== undefined && profile.revenue !== "") {
+        updates.revenue = String(profile.revenue);
+      }
+      if (profile.profit !== undefined && profile.profit !== "") {
+        updates.profit = String(profile.profit);
+      }
+      if (profile.obligations !== undefined && profile.obligations !== "") {
+        updates.obligations = String(profile.obligations);
+      }
+    }
+
+    setForm((previous) => ({ ...previous, ...updates }));
+    setFieldErrors({});
+
+    if (companyResult.ok) {
+      setLookup({ state: "ok", company: companyResult.company, error: null });
+    } else if (profile.businessName) {
+      setLookup({
+        state: "ok",
+        company: {
+          inn,
+          company_name: profile.businessName,
+          company_status: null,
+          registration_date: null,
+          is_simplified_tax: null,
+        },
+        error: null,
+      });
+    } else {
+      setLookup({
+        state: "error",
+        company: null,
+        error: { message: companyResult.message },
+      });
+    }
+
+    if (statementResult.ok) {
+      setFillStatus({
+        state: "ok",
+        message: `Данные заполнены из профиля. Финансовые показатели — из отчётности за ${statementResult.statement.report_year} год (PostgreSQL).`,
+      });
+    } else if (statementResult.type === "not_found") {
+      setFillStatus({
+        state: "warn",
+        message:
+          "Данные профиля подставлены, но финансовой отчётности в БД нет — заполните показатели вручную.",
+      });
+    } else {
+      setFillStatus({
+        state: "warn",
+        message: `Данные профиля подставлены. ${statementResult.message}`,
+      });
+    }
+  }
+
+  function handleRetry() {
+    setCatalog({ key: null, products: [], error: null });
+    setReloadKey((value) => value + 1);
+  }
+
+  function resetFilters() {
+    setBizType("ip");
+    setBizAge("more3");
+    setPurpose(PURPOSE_ALL);
+    setAmount(DEFAULT_AMOUNT);
+    setTermYears(DEFAULT_TERM_YEARS);
+    setSelectedProductId(null);
+    setDetailsProductId(null);
   }
 
   function validate() {
@@ -177,7 +282,7 @@ function resetForm(product) {
       revenue: Number(form.revenue),
       profit: Number(form.profit),
       obligations: Number(form.obligations),
-      revenueSource: profileFill.state === "ok" ? "api" : "manual",
+      revenueSource: lookup.state === "ok" ? "api" : "manual",
     });
     setIsSubmitting(false);
   }
@@ -188,7 +293,7 @@ function resetForm(product) {
         <div>
           <h1 className="page-title">Подбор кредита</h1>
           <p className="page-subtitle">
-            Укажите параметры — каталог обновится. Продукты и расчёты демонстрационные.
+            Активные продукты из каталога банка (таблица loan_catalog). Расчёты демонстрационные.
           </p>
         </div>
         <div className="page-head-actions">
@@ -206,8 +311,22 @@ function resetForm(product) {
           </div>
 
           <div className="filter-group">
-            <div className="filter-label">Залог</div>
-            <Segmented options={COLLATERAL_TYPES} value={collateral} onChange={setCollateral} ariaLabel="Залог" />
+            <label className="filter-label" htmlFor="loanPurpose">
+              Цель кредитования
+            </label>
+            <select
+              id="loanPurpose"
+              className="input"
+              value={purpose}
+              onChange={(event) => setPurpose(event.target.value)}
+            >
+              <option value={PURPOSE_ALL}>Все цели</option>
+              {LOAN_PURPOSES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="filter-group">
@@ -257,263 +376,265 @@ function resetForm(product) {
             </div>
           </div>
 
-          <p className="hint-sm">Ставки и условия тестовые, не являются офертой банка.</p>
+          <p className="hint-sm">
+            Ставки и условия загружаются из loan_catalog (PostgreSQL) и не являются офертой банка.
+          </p>
         </aside>
 
         <section className="calc-results">
-          {products.length === 0 && (
+          {isCatalogLoading && (
+            <div className="skeleton-list" aria-label="Загрузка кредитных продуктов">
+              <div className="skeleton" />
+              <div className="skeleton" />
+              <div className="skeleton" />
+            </div>
+          )}
+
+          {!isCatalogLoading && catalogError && (
+            <>
+              <div className="notice notice-warn">{catalogError}</div>
+              <div>
+                <Button variant="secondary" size="sm" onClick={handleRetry}>
+                  Повторить загрузку
+                </Button>
+              </div>
+            </>
+          )}
+
+          {!isCatalogLoading && !catalogError && products.length === 0 && (
             <EmptyState
               icon="🔍"
               title="Подходящих продуктов нет"
-              text="Измените тип регистрации, залог или срок ведения бизнеса."
+              text="Измените цель, сумму, срок, категорию или возраст бизнеса."
               action={
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setBizType("ip");
-                    setCollateral("none");
-                    setBizAge("more3");
-                  }}
-                >
+                <Button variant="secondary" onClick={resetFilters}>
                   Сбросить фильтры
                 </Button>
               }
             />
           )}
 
-          {products.map((product) => {
-            const eligible = isEligible(product, amount, months);
-            const payment =
-              eligible && product.calculable ? monthlyPayment(amount, product.rate, months) : null;
-            const overpayment = payment ? payment * months - amount : null;
-            const isSelected = selectedProductId === product.id;
+          {!isCatalogLoading && !catalogError && products.length > 0 && (
+            <p className="hint-sm" style={{ marginBottom: 4 }}>
+              Найдено продуктов: {products.length}
+            </p>
+          )}
 
-            return (
-              <article className="card product-card" key={product.id}>
-                <div className="product-head">
-                  <div>
-                    <h3 className="product-title">{product.title}</h3>
-                    <p className="product-subtitle">{product.subtitle}</p>
-                  </div>
-                  <div className="product-icon" aria-hidden="true">
-                    {product.icon}
-                  </div>
-                </div>
+          {!isCatalogLoading &&
+            !catalogError &&
+            products.map((product) => {
+              const payment = monthlyPayment(amount, product.rate, months);
+              const overpayment = payment ? payment * months - amount : null;
+              const isSelected = selectedProductId === product.id;
+              const isDetails = detailsProductId === product.id;
 
-                <div className="product-metrics">
-                  <div>
-                    <div className="metric-label">Ставка</div>
-                    <div className="metric-value">{formatRate(product.rate)}</div>
-                  </div>
-                  <div>
-                    <div className="metric-label">Переплата</div>
-                    <div className="metric-value">{overpayment ? formatMoney(overpayment) : "—"}</div>
-                  </div>
-                  <div>
-                    <div className="metric-label">Платёж</div>
-                    <div className="metric-value">{payment ? formatMoney(payment) : "—"}</div>
-                  </div>
-                </div>
-
-                {!eligible && (
-                  <p className="hint-sm" style={{ marginBottom: 12 }}>
-                    Недоступно для текущих суммы и срока: продукт от {formatMoney(product.minAmount)} до{" "}
-                    {formatMoney(product.maxAmount)}, срок от {product.minTermMonths} до{" "}
-                    {product.maxTermMonths} мес.
-                  </p>
-                )}
-
-                <div className="product-actions">
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      setDetailsProductId((current) => (current === product.id ? null : product.id))
-                    }
-                  >
-                    {detailsProductId === product.id ? "Свернуть" : "Узнать подробнее"}
-                  </Button>
-                  <Button variant="primary" onClick={() => resetForm(product)} disabled={!eligible}>
-                    Заполнить заявку
-                  </Button>
-                </div>
-
-                {detailsProductId === product.id && (
-                  <div className="company-result" style={{ marginTop: 16 }}>
+              return (
+                <article className="card product-card" key={product.id}>
+                  <div className="product-head">
                     <div>
-                      <div className="company-result-label">Базовая ставка</div>
-                      <div className="company-result-value">{formatRate(product.rate)} годовых</div>
+                      <h3 className="product-title">{product.title}</h3>
+                      <p className="product-subtitle">{product.subtitle}</p>
+                    </div>
+                    <div className="product-icon" aria-hidden="true">
+                      {product.icon}
+                    </div>
+                  </div>
+
+                  <div className="product-metrics">
+                    <div>
+                      <div className="metric-label">Ставка</div>
+                      <div className="metric-value">{formatRate(product.rate)}</div>
                     </div>
                     <div>
-                      <div className="company-result-label">Сумма</div>
-                      <div className="company-result-value">
-                        {formatMoney(product.minAmount)} — {formatMoney(product.maxAmount)}
+                      <div className="metric-label">Переплата</div>
+                      <div className="metric-value">{overpayment ? formatMoney(overpayment) : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="metric-label">Платёж</div>
+                      <div className="metric-value">{payment ? formatMoney(payment) : "—"}</div>
+                    </div>
+                  </div>
+
+                  <div className="product-actions">
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setDetailsProductId((current) => (current === product.id ? null : product.id))
+                      }
+                    >
+                      {isDetails ? "Свернуть" : "Узнать подробнее"}
+                    </Button>
+                    <Button variant="primary" onClick={() => resetForm(product)}>
+                      Заполнить заявку
+                    </Button>
+                  </div>
+
+                  {isDetails && (
+                    <div className="company-result" style={{ marginTop: 16 }}>
+                      <div>
+                        <div className="company-result-label">Базовая ставка</div>
+                        <div className="company-result-value">{formatRate(product.rate)} годовых</div>
                       </div>
-                    </div>
-                    <div>
-                      <div className="company-result-label">Срок</div>
-                      <div className="company-result-value">
-                        {product.minTermMonths} — {product.maxTermMonths} мес.
-                      </div>
-                    </div>
-                    <div>
-                      <div className="company-result-label">Требования</div>
-                      <div className="company-result-value">
-                        {product.collateral === "with" ? "С залогом" : "Без залога"} · бизнес от{" "}
-                        {product.minBusinessAge} мес.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {isSelected && (
-                  <form className="apply-panel" onSubmit={handleSubmit} noValidate>
-                    <h4 className="apply-title">
-                      Заявка на «{product.title}» · {formatMoney(amount)} · {months} мес.
-                    </h4>
-
-                    <div className="form-grid">
-                      <Field label="ИНН компании" htmlFor="applyInn" error={fieldErrors.inn}>
-                        <input
-                          id="applyInn"
-                          className={`input${fieldErrors.inn ? " has-error" : ""}`}
-                          value={form.inn}
-                          inputMode="numeric"
-                          maxLength={12}
-                          placeholder="10 или 12 цифр"
-                          onChange={(event) => {
-                            updateField("inn", event.target.value);
-                            setLookup({ state: "idle", company: null, error: null });
-                            setProfileFill({ state: "idle", year: null, message: "" });
-                          }}
-                        />
-                      </Field>
-                      <div className="field">
-                        <span className="field-label">Сведения о компании</span>
-                        <div className="row row-wrap">
-                          <Button
-                            variant="secondary"
-                            onClick={handleLookup}
-                            loading={lookup.state === "loading"}
-                          >
-                            Найти организацию
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => fillFromProfile(form.inn)}
-                            loading={profileFill.state === "loading"}
-                          >
-                            Заполнить из профиля
-                          </Button>
+                      <div>
+                        <div className="company-result-label">Сумма</div>
+                        <div className="company-result-value">
+                          {formatMoney(product.minAmount)} — {formatMoney(product.maxAmount)}
                         </div>
                       </div>
+                      <div>
+                        <div className="company-result-label">Срок</div>
+                        <div className="company-result-value">
+                          {product.minTermMonths} — {product.maxTermMonths} мес.
+                        </div>
+                      </div>
+                      <div>
+                        <div className="company-result-label">Возраст бизнеса</div>
+                        <div className="company-result-value">от {product.minBusinessAge} мес.</div>
+                      </div>
+                    </div>
+                  )}
 
-                      <Field label="Выручка за отчётный год, ₽" htmlFor="applyRevenue" error={fieldErrors.revenue}>
-                        <input
-                          id="applyRevenue"
-                          className={`input${fieldErrors.revenue ? " has-error" : ""}`}
-                          inputMode="numeric"
-                          placeholder="Например, 10 000 000"
-                          value={form.revenue}
-                          onChange={(event) => updateField("revenue", event.target.value)}
-                        />
-                      </Field>
-                      <Field label="Чистая прибыль за отчётный год, ₽" htmlFor="applyProfit" error={fieldErrors.profit}>
-                        <input
-                          id="applyProfit"
-                          className={`input${fieldErrors.profit ? " has-error" : ""}`}
-                          inputMode="numeric"
-                          placeholder="Например, 2 000 000"
-                          value={form.profit}
-                          onChange={(event) => updateField("profit", event.target.value)}
-                        />
-                      </Field>
-                      <Field
-                        label="Текущие кредитные обязательства, ₽"
-                        htmlFor="applyObligations"
-                        error={fieldErrors.obligations}
-                      >
-                        <input
-                          id="applyObligations"
-                          className={`input${fieldErrors.obligations ? " has-error" : ""}`}
-                          inputMode="numeric"
-                          placeholder="Например, 500 000"
-                          value={form.obligations}
-                          onChange={(event) => updateField("obligations", event.target.value)}
-                        />
-                      </Field>
-                      <Field label="Цель кредитования" htmlFor="applyPurpose">
-                        <select
-                          id="applyPurpose"
-                          className="input"
-                          value={form.purpose}
-                          onChange={(event) => updateField("purpose", event.target.value)}
+                  {isSelected && selectedProduct && (
+                    <form className="apply-panel" onSubmit={handleSubmit} noValidate>
+                      <h4 className="apply-title">
+                        Заявка на «{product.title}» · {formatMoney(amount)} · {months} мес.
+                      </h4>
+
+                      <div className="form-grid">
+                        <Field label="ИНН компании" htmlFor="applyInn" error={fieldErrors.inn}>
+                          <input
+                            id="applyInn"
+                            className={`input${fieldErrors.inn ? " has-error" : ""}`}
+                            value={form.inn}
+                            inputMode="numeric"
+                            maxLength={12}
+                            placeholder="10 или 12 цифр"
+                            onChange={(event) => {
+                              updateField("inn", event.target.value);
+                              setLookup({ state: "idle", company: null, error: null });
+                            }}
+                          />
+                        </Field>
+                        <div className="field">
+                          <span className="field-label">Данные из профиля</span>
+                          <div className="row row-wrap">
+                            <Button
+                              variant="secondary"
+                              onClick={handleFillFromProfile}
+                              loading={lookup.state === "loading"}
+                            >
+                              Заполнить из профиля
+                            </Button>
+                          </div>
+                          <span className="field-hint">
+                            ИНН и данные компании — из профиля, финансовые показатели — из
+                            последней отчётности в БД.
+                          </span>
+                        </div>
+
+                        <Field label="Выручка за отчётный год, ₽" htmlFor="applyRevenue" error={fieldErrors.revenue}>
+                          <input
+                            id="applyRevenue"
+                            className={`input${fieldErrors.revenue ? " has-error" : ""}`}
+                            inputMode="numeric"
+                            placeholder="Например, 10 000 000"
+                            value={form.revenue}
+                            onChange={(event) => updateField("revenue", event.target.value)}
+                          />
+                        </Field>
+                        <Field label="Чистая прибыль за отчётный год, ₽" htmlFor="applyProfit" error={fieldErrors.profit}>
+                          <input
+                            id="applyProfit"
+                            className={`input${fieldErrors.profit ? " has-error" : ""}`}
+                            inputMode="numeric"
+                            placeholder="Например, 2 000 000"
+                            value={form.profit}
+                            onChange={(event) => updateField("profit", event.target.value)}
+                          />
+                        </Field>
+                        <Field
+                          label="Текущие кредитные обязательства, ₽"
+                          htmlFor="applyObligations"
+                          error={fieldErrors.obligations}
                         >
-                          {LOAN_PURPOSES.map((purpose) => (
-                            <option key={purpose} value={purpose}>
-                              {purpose}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
-
-                    {profileFill.state === "ok" && (
-                      <div className="notice" style={{ marginTop: 16 }}>
-                        Выручка, прибыль и обязательства подставлены из профиля (отчётность за{" "}
-                        {profileFill.year} год). Значения можно изменить.
+                          <input
+                            id="applyObligations"
+                            className={`input${fieldErrors.obligations ? " has-error" : ""}`}
+                            inputMode="numeric"
+                            placeholder="Например, 500 000"
+                            value={form.obligations}
+                            onChange={(event) => updateField("obligations", event.target.value)}
+                          />
+                        </Field>
+                        <Field label="Цель кредитования" htmlFor="applyPurpose">
+                          <select
+                            id="applyPurpose"
+                            className="input"
+                            value={form.purpose}
+                            onChange={(event) => updateField("purpose", event.target.value)}
+                          >
+                            {LOAN_PURPOSES.map((item) => (
+                              <option key={item.value} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
                       </div>
-                    )}
 
-                    {profileFill.state === "error" && (
-                      <div className="notice notice-warn" style={{ marginTop: 16 }}>
-                        {profileFill.message}
+                      {fillStatus.state !== "idle" && (
+                        <div
+                          className={`notice${fillStatus.state === "warn" ? " notice-warn" : ""}`}
+                          style={{ marginTop: 16 }}
+                        >
+                          {fillStatus.message}
+                        </div>
+                      )}
+
+                      {lookup.state === "error" && (
+                        <div className="notice notice-warn" style={{ marginTop: 16 }}>
+                          {lookup.error?.message || "Не удалось получить данные компании."}
+                        </div>
+                      )}
+
+                      {lookup.company && (
+                        <div className="company-result">
+                          <div>
+                            <div className="company-result-label">Компания</div>
+                            <div className="company-result-value">{lookup.company.company_name || "—"}</div>
+                          </div>
+                          <div>
+                            <div className="company-result-label">ИНН</div>
+                            <div className="company-result-value">{lookup.company.inn}</div>
+                          </div>
+                          <div>
+                            <div className="company-result-label">Статус</div>
+                            <div className="company-result-value">{lookup.company.company_status || "—"}</div>
+                          </div>
+                          <div>
+                            <div className="company-result-label">Дата регистрации</div>
+                            <div className="company-result-value">{formatDate(lookup.company.registration_date)}</div>
+                          </div>
+                          <div>
+                            <div className="company-result-label">УСН</div>
+                            <div className="company-result-value">{lookup.company.is_simplified_tax ? "Да" : "Нет"}</div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="form-actions">
+                        <Button variant="ghost" onClick={() => setSelectedProductId(null)}>
+                          Отмена
+                        </Button>
+                        <Button type="submit" variant="primary" loading={isSubmitting}>
+                          Отправить заявку
+                        </Button>
                       </div>
-                    )}
-
-                    {lookup.state === "error" && (
-                      <div className="notice notice-warn" style={{ marginTop: 16 }}>
-                        {lookup.error?.message || "Не удалось получить данные компании."}
-                      </div>
-                    )}
-
-                    {lookup.company && (
-                      <div className="company-result">
-                        <div>
-                          <div className="company-result-label">Компания</div>
-                          <div className="company-result-value">{lookup.company.company_name || "—"}</div>
-                        </div>
-                        <div>
-                          <div className="company-result-label">ИНН</div>
-                          <div className="company-result-value">{lookup.company.inn}</div>
-                        </div>
-                        <div>
-                          <div className="company-result-label">Статус</div>
-                          <div className="company-result-value">{lookup.company.company_status || "—"}</div>
-                        </div>
-                        <div>
-                          <div className="company-result-label">Дата регистрации</div>
-                          <div className="company-result-value">{formatDate(lookup.company.registration_date)}</div>
-                        </div>
-                        <div>
-                          <div className="company-result-label">УСН</div>
-                          <div className="company-result-value">{lookup.company.is_simplified_tax ? "Да" : "Нет"}</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="form-actions">
-                      <Button variant="ghost" onClick={() => setSelectedProductId(null)}>
-                        Отмена
-                      </Button>
-                      <Button type="submit" variant="primary" loading={isSubmitting}>
-                        Отправить заявку
-                      </Button>
-                    </div>
-                  </form>
-                )}
-              </article>
-            );
-          })}
+                    </form>
+                  )}
+                </article>
+              );
+            })}
         </section>
       </div>
     </div>

@@ -117,9 +117,10 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    if (session?.role !== "business") return;
+    if (session?.role !== "business") return undefined;
+    const inn = session?.companyInn || COMPANY_INN;
     let active = true;
-    getCompany(COMPANY_INN).then((result) => {
+    getCompany(inn).then((result) => {
       if (active && result.ok) setCompany(result.company);
     });
     return () => {
@@ -131,8 +132,8 @@ export default function App() {
     setToast({ title, text });
   }
 
-  function handleLogin({ login, role }) {
-    setSession({ login, role });
+  function handleLogin({ login, role, companyInn }) {
+    setSession({ login, role, companyInn });
     setView(role === "employee" ? "bank" : "applications");
   }
 
