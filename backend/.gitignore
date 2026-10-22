@@ -1,4 +1,4 @@
-# Виртуальное окружение
+﻿# Виртуальное окружение
 .venv/
 
 # Python
@@ -16,3 +16,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+*.txt
+*.csv
