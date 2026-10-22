@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ApiStatus, Button, EmptyState, Field, Segmented } from "../components/ui.jsx";
-import { getCompany } from "../api.js";
+import { getCompany, getLatestFinancialStatement } from "../api.js";
 import {
   BUSINESS_AGE_TYPES,
   BUSINESS_TYPES,
@@ -16,6 +16,17 @@ import {
 const AMOUNT_MIN = 50000;
 const AMOUNT_MAX = 30000000;
 const AMOUNT_STEP = 50000;
+
+// Decimal приходит из API строкой ("14000000.00") — приводим к числу, пустое -> null.
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isNaN(number) ? null : number;
+}
+
+function formatInput(value) {
+  return value === null ? "" : String(Math.round(value));
+}
 
 function isEligible(product, amount, months) {
   return (
@@ -45,6 +56,8 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
   const [fieldErrors, setFieldErrors] = useState({});
   const [lookup, setLookup] = useState({ state: "idle", company: null, error: null });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Автозаполнение из профиля: idle | loading | ok | error
+  const [profileFill, setProfileFill] = useState({ state: "idle", year: null, message: "" });
 
   const months = termYears * 12;
   const userAgeMonths = bizAge === "more3" ? 36 : 1;
@@ -62,14 +75,52 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
 
   const selectedProduct = products.find((product) => product.id === selectedProductId) || null;
 
-  function resetForm(product) {
+  // Подтягивает выручку, прибыль и обязательства из financial_statements (данные профиля).
+  async function fillFromProfile(inn) {
+    setProfileFill({ state: "loading", year: null, message: "" });
+    const result = await getLatestFinancialStatement(inn);
+
+    if (!result.ok) {
+      setProfileFill({ state: "error", year: null, message: result.message });
+      return;
+    }
+
+    const statement = result.statement;
+    const revenue = toNumberOrNull(statement.revenue);
+    const profit = toNumberOrNull(statement.net_profit);
+    const longDebt = toNumberOrNull(statement.longterm_debt);
+    const shortDebt = toNumberOrNull(statement.shortterm_debt);
+    const obligations =
+      longDebt === null && shortDebt === null ? null : (longDebt ?? 0) + (shortDebt ?? 0);
+
+    setFieldErrors((previous) => ({
+      ...previous,
+      revenue: undefined,
+      profit: undefined,
+      obligations: undefined,
+    }));
+    setForm((previous) => ({
+      ...previous,
+      revenue: revenue !== null ? formatInput(revenue) : previous.revenue,
+      profit: profit !== null ? formatInput(profit) : previous.profit,
+      obligations: obligations !== null ? formatInput(obligations) : previous.obligations,
+    }));
+    setProfileFill({ state: "ok", year: statement.report_year, message: "" });
+  }
+
+function resetForm(product) {
+    const inn = form.inn || defaultCompany?.inn || "";
     setSelectedProductId(product.id);
     setDetailsProductId(null);
     setFieldErrors({});
     setLookup({ state: "idle", company: null, error: null });
+    setProfileFill({ state: "idle", year: null, message: "" });
     setForm((previous) => ({
       ...previous,
-      inn: previous.inn || defaultCompany?.inn || "",
+      inn,
+      revenue: "",
+      profit: "",
+      obligations: "",
     }));
   }
 
@@ -126,7 +177,7 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
       revenue: Number(form.revenue),
       profit: Number(form.profit),
       obligations: Number(form.obligations),
-      revenueSource: lookup.state === "ok" ? "api" : "manual",
+      revenueSource: profileFill.state === "ok" ? "api" : "manual",
     });
     setIsSubmitting(false);
   }
@@ -332,6 +383,7 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
                           onChange={(event) => {
                             updateField("inn", event.target.value);
                             setLookup({ state: "idle", company: null, error: null });
+                            setProfileFill({ state: "idle", year: null, message: "" });
                           }}
                         />
                       </Field>
@@ -344,6 +396,13 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
                             loading={lookup.state === "loading"}
                           >
                             Найти организацию
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => fillFromProfile(form.inn)}
+                            loading={profileFill.state === "loading"}
+                          >
+                            Заполнить из профиля
                           </Button>
                         </div>
                       </div>
@@ -397,6 +456,19 @@ export default function CreditCalculator({ defaultCompany, health, onApply }) {
                         </select>
                       </Field>
                     </div>
+
+                    {profileFill.state === "ok" && (
+                      <div className="notice" style={{ marginTop: 16 }}>
+                        Выручка, прибыль и обязательства подставлены из профиля (отчётность за{" "}
+                        {profileFill.year} год). Значения можно изменить.
+                      </div>
+                    )}
+
+                    {profileFill.state === "error" && (
+                      <div className="notice notice-warn" style={{ marginTop: 16 }}>
+                        {profileFill.message}
+                      </div>
+                    )}
 
                     {lookup.state === "error" && (
                       <div className="notice notice-warn" style={{ marginTop: 16 }}>
