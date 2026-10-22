@@ -74,6 +74,13 @@ FINANCIAL_INSERT = f"""
 
 COMPANY_EXISTS_SQL = "SELECT 1 FROM companies WHERE inn = %(inn)s"
 
+FINANCIAL_SELECT = f"""
+    SELECT financial_id, inn, report_year, {_FINANCIAL_COLUMNS}
+      FROM financial_statements
+     WHERE inn = %(inn)s
+     ORDER BY report_year DESC
+"""
+
 app = FastAPI(
     title="Alfa Hakaton Backend",
     version="0.1.0",
@@ -213,6 +220,61 @@ def create_financial_statement(payload: FinancialStatementCreate) -> FinancialSt
         raise HTTPException(status_code=500, detail="Не удалось сохранить отчётность")
 
     return FinancialStatement(**row)
+
+
+def _validate_inn(inn: str) -> None:
+    if not INN_RE.fullmatch(inn):
+        raise HTTPException(
+            status_code=422,
+            detail="ИНН должен состоять только из цифр и содержать 10 или 12 символов",
+        )
+
+
+def _fetch_statements(inn: str, limit: int | None = None) -> list[dict]:
+    sql = FINANCIAL_SELECT + (" LIMIT %(limit)s" if limit else "")
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, {"inn": inn, "limit": limit})
+            return cur.fetchall()
+    except (psycopg.Error, OSError) as exc:
+        logger.error("Ошибка БД при чтении отчётности (ИНН %s): %s", inn, exc, exc_info=True)
+        raise HTTPException(status_code=503, detail="База данных недоступна") from exc
+
+
+@app.get(
+    "/api/financial-statements/{inn}/latest",
+    response_model=FinancialStatement,
+    summary="Последняя годовая отчётность компании",
+    responses={
+        404: {"model": ErrorResponse, "description": "Отчётность не найдена"},
+        422: {"model": ErrorResponse, "description": "Некорректный ИНН"},
+        503: {"model": ErrorResponse, "description": "База данных недоступна"},
+    },
+    tags=["financial_statements"],
+)
+def get_latest_financial_statement(inn: str) -> FinancialStatement:
+    """Отчётность за самый свежий год: используется для автозаполнения заявки."""
+    _validate_inn(inn)
+    rows = _fetch_statements(inn, limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Финансовая отчётность не найдена")
+    return FinancialStatement(**rows[0])
+
+
+@app.get(
+    "/api/financial-statements/{inn}",
+    response_model=list[FinancialStatement],
+    summary="Вся годовая отчётность компании",
+    responses={
+        422: {"model": ErrorResponse, "description": "Некорректный ИНН"},
+        503: {"model": ErrorResponse, "description": "База данных недоступна"},
+    },
+    tags=["financial_statements"],
+)
+def list_financial_statements(inn: str) -> list[FinancialStatement]:
+    """Все годы по убыванию. Пустой список, если отчётности нет."""
+    _validate_inn(inn)
+    return [FinancialStatement(**row) for row in _fetch_statements(inn)]
 
 
 if __name__ == "__main__":  # pragma: no cover - ручной запуск

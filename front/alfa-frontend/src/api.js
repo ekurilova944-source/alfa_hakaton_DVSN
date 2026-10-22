@@ -199,3 +199,54 @@ export async function createFinancialStatement(payload) {
     message: normalizeDetail(data) || "Не удалось сохранить отчётность",
   };
 }
+
+/**
+ * Последняя годовая отчётность компании (то, что предприниматель заполнил в профиле).
+ * Возвращает { ok: true, statement } либо { ok: false, type, message }.
+ * type: not_found | invalid | unavailable | error
+ */
+export async function getLatestFinancialStatement(inn) {
+  const value = String(inn || "").trim();
+
+  if (!/^\d{10}(\d{2})?$/.test(value)) {
+    return { ok: false, type: "invalid", message: "ИНН должен состоять из 10 или 12 цифр" };
+  }
+
+  let result;
+  try {
+    result = await request(`/api/financial-statements/${value}/latest`);
+  } catch {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: "API недоступен. Проверьте, запущен ли backend на " + API_URL + ".",
+    };
+  }
+
+  const { response, payload } = result;
+
+  if (response.ok && payload) return { ok: true, statement: payload };
+
+  if (response.status === 404) {
+    return {
+      ok: false,
+      type: "not_found",
+      message: "В профиле нет финансовой отчётности. Заполните её во вкладке «Профиль».",
+    };
+  }
+  if (response.status === 422) {
+    return { ok: false, type: "invalid", message: normalizeDetail(payload) || "Некорректный ИНН" };
+  }
+  if (response.status === 503) {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: normalizeDetail(payload) || "База данных недоступна",
+    };
+  }
+  return {
+    ok: false,
+    type: "error",
+    message: normalizeDetail(payload) || "Не удалось получить отчётность",
+  };
+}
