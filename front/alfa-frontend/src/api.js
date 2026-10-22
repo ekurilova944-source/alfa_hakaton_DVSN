@@ -10,14 +10,15 @@ const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replac
 
 const REQUEST_TIMEOUT_MS = 4000;
 
-async function request(path) {
+async function request(path, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${API_URL}${path}`, {
+      ...options,
       signal: controller.signal,
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...(options.headers || {}) },
     });
 
     let payload = null;
@@ -129,4 +130,72 @@ export async function getCompany(inn) {
   }
 
   return { ok: true, company: payload };
+}
+
+/**
+ * Сохранение годовой финансовой отчётности в таблицу financial_statements.
+ * Возвращает { ok: true, statement } либо { ok: false, type, message }.
+ * type: conflict | not_found | invalid | unavailable | error
+ */
+export async function createFinancialStatement(payload) {
+  let result;
+  try {
+    result = await request("/api/financial-statements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: "API недоступен. Проверьте, запущен ли backend на " + API_URL + ".",
+    };
+  }
+
+  const { response, payload: data } = result;
+
+  if (response.status === 201 && data) {
+    return { ok: true, statement: data };
+  }
+
+  if (response.status === 409) {
+    return {
+      ok: false,
+      type: "conflict",
+      message:
+        normalizeDetail(data) ||
+        "Отчётность за этот отчётный год уже существует",
+    };
+  }
+
+  if (response.status === 404) {
+    return {
+      ok: false,
+      type: "not_found",
+      message: normalizeDetail(data) || "Компания с таким ИНН не найдена",
+    };
+  }
+
+  if (response.status === 422) {
+    return {
+      ok: false,
+      type: "invalid",
+      message: normalizeDetail(data) || "Некорректные данные отчётности",
+    };
+  }
+
+  if (response.status === 503) {
+    return {
+      ok: false,
+      type: "unavailable",
+      message: normalizeDetail(data) || "База данных недоступна",
+    };
+  }
+
+  return {
+    ok: false,
+    type: "error",
+    message: normalizeDetail(data) || "Не удалось сохранить отчётность",
+  };
 }

@@ -13,7 +13,14 @@ from psycopg.rows import dict_row
 
 from . import db
 from .config import get_settings
-from .schemas import Company, ErrorResponse, HealthResponse, ServiceInfo
+from .schemas import (
+    Company,
+    ErrorResponse,
+    FinancialStatement,
+    FinancialStatementCreate,
+    HealthResponse,
+    ServiceInfo,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,12 +46,40 @@ COMPANY_SELECT = """
      WHERE inn = %(inn)s
 """
 
+# Поля таблицы financial_statements, которые заполняются через API.
+FINANCIAL_FIELDS = (
+    "revenue",
+    "net_profit",
+    "assets",
+    "current_assets",
+    "total_equity",
+    "longterm_debt",
+    "shortterm_debt",
+    "shortterm_liab",
+    "retained_earnings",
+    "profit_from_sales",
+    "before_tax",
+    "cash_equivalents",
+    "interest_payable",
+    "balance_operating",
+)
+_FINANCIAL_COLUMNS = ", ".join(FINANCIAL_FIELDS)
+_FINANCIAL_VALUES = ", ".join(f"%({name})s" for name in FINANCIAL_FIELDS)
+
+FINANCIAL_INSERT = f"""
+    INSERT INTO financial_statements (inn, report_year, {_FINANCIAL_COLUMNS})
+    VALUES (%(inn)s, %(report_year)s, {_FINANCIAL_VALUES})
+    RETURNING financial_id, inn, report_year, {_FINANCIAL_COLUMNS}
+"""
+
+COMPANY_EXISTS_SQL = "SELECT 1 FROM companies WHERE inn = %(inn)s"
+
 app = FastAPI(
     title="Alfa Hakaton Backend",
     version="0.1.0",
     description=(
-        "Минимальный backend для кредитования ИП/ООО: "
-        "проверка состояния сервиса и карточка компании по ИНН."
+        "Минимальный backend для кредитования ИП/ООО: проверка состояния сервиса, "
+        "карточка компании по ИНН и сохранение годовой финансовой отчётности."
     ),
 )
 
@@ -118,6 +153,66 @@ def get_company(
         raise HTTPException(status_code=404, detail="Компания не найдена")
 
     return Company(**row)
+
+
+@app.post(
+    "/api/financial-statements",
+    response_model=FinancialStatement,
+    status_code=201,
+    summary="Добавить годовую финансовую отчётность",
+    responses={
+        404: {"model": ErrorResponse, "description": "Компания не найдена"},
+        409: {"model": ErrorResponse, "description": "Отчётность за этот год уже существует"},
+        422: {"model": ErrorResponse, "description": "Некорректные данные отчётности"},
+        503: {"model": ErrorResponse, "description": "База данных недоступна"},
+    },
+    tags=["financial_statements"],
+)
+def create_financial_statement(payload: FinancialStatementCreate) -> FinancialStatement:
+    """Сохраняет годовую финансовую отчётность компании в ``financial_statements``.
+
+    Одна компания может иметь только одну запись за отчётный год
+    (ограничение ``UNIQUE (inn, report_year)`` в БД).
+    """
+    params = payload.model_dump()
+
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(COMPANY_EXISTS_SQL, {"inn": payload.inn})
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Компания не найдена")
+
+            cur.execute(FINANCIAL_INSERT, params)
+            row = cur.fetchone()
+            conn.commit()
+    except HTTPException:
+        raise
+    except psycopg.errors.UniqueViolation as exc:
+        logger.warning(
+            "Отчётность за %s год для ИНН %s уже существует",
+            payload.report_year,
+            payload.inn,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Отчётность за этот отчётный год уже существует",
+        ) from exc
+    except psycopg.errors.ForeignKeyViolation as exc:
+        raise HTTPException(status_code=404, detail="Компания не найдена") from exc
+    except (psycopg.Error, OSError) as exc:
+        logger.error(
+            "Ошибка БД при сохранении отчётности (ИНН %s, год %s): %s",
+            payload.inn,
+            payload.report_year,
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail="База данных недоступна") from exc
+
+    if row is None:  # pragma: no cover - защита от неожиданного поведения БД
+        raise HTTPException(status_code=500, detail="Не удалось сохранить отчётность")
+
+    return FinancialStatement(**row)
 
 
 if __name__ == "__main__":  # pragma: no cover - ручной запуск
