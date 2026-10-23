@@ -1,4 +1,4 @@
-"""Pydantic-модели ответов API."""
+﻿"""Pydantic-модели ответов API."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ class LoanProduct(BaseModel):
     loan_purpose: str | None = None
     is_active: bool
     business_age: int
-    min_credit_rating: int
+    min_credit_rating: int | None = None
 
 
 class LoginRequest(BaseModel):

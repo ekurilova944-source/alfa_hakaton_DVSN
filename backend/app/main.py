@@ -1,4 +1,4 @@
-"""FastAPI-приложение: health-check и поиск компании по ИНН."""
+﻿"""FastAPI-приложение: health-check и поиск компании по ИНН."""
 
 from __future__ import annotations
 
@@ -105,8 +105,7 @@ LOAN_PRODUCTS_SELECT = """
            percent::float8 AS percent,
            loan_purpose,
            is_active,
-           business_age,
-           min_credit_rating
+           business_age
       FROM loan_catalog
      WHERE is_active = TRUE
        AND business_category IN (%(business_category)s, 'both')
